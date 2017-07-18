@@ -201,6 +201,9 @@ Definition demo_rep3 :=
 
 *)
 
+Definition two := abs (abs (app (var_b 1) (app (var_b 1) (var_b 0)))).
+Definition COMB_K := abs (abs (var_b 1)).
+Definition COMB_S := abs (abs (abs (app (app (var_b 2) (var_b 0)) (app (var_b 1) (var_b 0))))).
 (* FILL IN HERE *)
 
 (** There are two important advantages of the locally nameless
@@ -268,20 +271,30 @@ Qed.
 Lemma subst_eq_var: forall (x : var) u,
   [x ~> u](var_f x) = u.
 Proof.
-  (* FILL IN HERE *) Admitted.
+  simpl. intros x u.
+  destruct (x==x); auto.
+  contradiction n. auto.
+Qed.
 
 (** *** Exercise [subst_neq_var] *)
 
 Lemma subst_neq_var : forall (x y : var) u,
   y <> x -> [x ~> u](var_f y) = var_f y.
 Proof.
-  (* FILL IN HERE *) Admitted.
+  intros x y u H. simpl. destruct (y==x).
+  contradiction.
+  reflexivity.
+Qed.
 
 (** *** Exercise [subst_same] *)
 
 Lemma subst_same : forall y e, [y ~> var_f y] e = e.
 Proof.
-  (* FILL IN HERE *) Admitted.
+Admitted.
+  (* intros y e. induction e; simpl. *)
+  (* - reflexivity. *)
+  (* -  *)
+  
 
 
 (*************************************************************************)
