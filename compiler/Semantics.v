@@ -526,7 +526,7 @@ Inductive kstep : (com * cont * state) -> (com * cont * state) -> Prop :=
   | KS_ContinueSeq: forall c k st,
       kstep (CONTINUE, Kseq c k, st) (CONTINUE, k, st)
   | KS_ContinueWhile: forall b c k st,
-      kstep (CONTINUE, Kwhile b c k, st) (c, Kwhile b c k, st).
+      kstep (CONTINUE, Kwhile b c k, st) (SKIP, Kwhile b c k, st).
 
 End BreakCont. 
 
@@ -537,85 +537,85 @@ End BreakCont.
   that carries the label "lbl".  Similarly for "continue".
   Give the transition rules for "break lbl" and "continue lbl". *)
 
-(* Module LabeledBreak. *)
+Module LabeledBreak.
 
-(* Definition label : Type := nat. *)
+Definition label : Type := nat.
 
-(* Inductive com : Type := *)
-(*   | CSkip : com *)
-(*   | CBreak : option label -> com               (* <-- new *) *)
-(*   | CContinue : option label -> com *)
-(*   | CAss : id -> aexp -> com *)
-(*   | CSeq : com -> com -> com *)
-(*   | CIf : bexp -> com -> com -> com *)
-(*   | CWhile : option label -> bexp -> com -> com. *)
+Inductive com : Type :=
+  | CSkip : com
+  | CBreak : option label -> com               (* <-- new *)
+  | CContinue : option label -> com
+  | CAss : id -> aexp -> com
+  | CSeq : com -> com -> com
+  | CIf : bexp -> com -> com -> com
+  | CWhile : option label -> bexp -> com -> com.
 
-(* Notation "'SKIP'" := *)
-(*   CSkip. *)
-(* Notation "'BREAK'" := *)
-(*   (CBreak None) (at level 80). *)
-(* Notation "'BREAK' l" := *)
-(*   (CBreak l) (at level 80). *)
-(* Notation "'CONTINUE' l" := *)
-(*   (CContinue l) (at level 80). *)
-(* Notation "x '::=' a" := *)
-(*   (CAss x a) (at level 60). *)
-(* Notation "c1 ;; c2" := *)
-(*   (CSeq c1 c2) (at level 80, right associativity). *)
-(* Notation "l : 'WHILE' b 'DO' c 'END'" := *)
-(*   (CWhile l b c) (at level 80, right associativity). *)
-(* Notation "'IFB' c1 'THEN' c2 'ELSE' c3 'FI'" := *)
-(*   (CIf c1 c2 c3) (at level 80, right associativity). *)
+Notation "'SKIP'" :=
+  CSkip.
+Notation "'BREAK' l" :=
+  (CBreak l) (at level 80).
+Notation "'CONTINUE' l" :=
+  (CContinue l) (at level 80).
+Notation "x '::=' a" :=
+  (CAss x a) (at level 60).
+Notation "c1 ;; c2" :=
+  (CSeq c1 c2) (at level 80, right associativity).
+Notation "l : 'WHILE' b 'DO' c 'END'" :=
+  (CWhile l b c) (at level 80, right associativity).
+Notation "'IFB' c1 'THEN' c2 'ELSE' c3 'FI'" :=
+  (CIf c1 c2 c3) (at level 80, right associativity).
   
-(* Inductive cont : Type := *)
-(*   | Kstop : cont *)
-(*   | Kseq : com -> cont -> cont *)
-(*   | Kwhile : option label -> bexp -> com -> cont -> cont. *)
+Inductive cont : Type :=
+  | Kstop : cont
+  | Kseq : com -> cont -> cont
+  | Kwhile : option label -> bexp -> com -> cont -> cont.
 
-(* Inductive kstep : (com * cont * state) -> (com * cont * state) -> Prop := *)
+Inductive kstep : (com * cont * state) -> (com * cont * state) -> Prop :=
 
-(*   | KS_Ass : forall st i a k n,            (**r Computation for assignments *) *)
-(*       aeval st a = n -> *)
-(*       kstep ((i ::= a), k, st) (SKIP, k, t_update st i n) *)
+  | KS_Ass : forall st i a k n,            (**r Computation for assignments *)
+      aeval st a = n ->
+      kstep ((i ::= a), k, st) (SKIP, k, t_update st i n)
 
-(*   | KS_Seq : forall st c1 c2 k,  (**r Focusing on the left part of a sequence *) *)
-(*       kstep ((c1 ;; c2), k, st) (c1, Kseq c2 k, st) *)
+  | KS_Seq : forall st c1 c2 k,  (**r Focusing on the left part of a sequence *)
+      kstep ((c1 ;; c2), k, st) (c1, Kseq c2 k, st)
 
-(*   | KS_IfTrue : forall st b c1 c2 k,  (**r Computation for conditionals *) *)
-(*       beval st b = true -> *)
-(*       kstep (IFB b THEN c1 ELSE c2 FI, k, st) (c1, k, st) *)
-(*   | KS_IfFalse : forall st b c1 c2 k, *)
-(*       beval st b = false -> *)
-(*       kstep (IFB b THEN c1 ELSE c2 FI, k, st) (c2, k, st) *)
+  | KS_IfTrue : forall st b c1 c2 k,  (**r Computation for conditionals *)
+      beval st b = true ->
+      kstep (IFB b THEN c1 ELSE c2 FI, k, st) (c1, k, st)
+  | KS_IfFalse : forall st b c1 c2 k,
+      beval st b = false ->
+      kstep (IFB b THEN c1 ELSE c2 FI, k, st) (c2, k, st)
 
-(*   | KS_WhileTrue : forall st l b c k,  (**r Computation and focusing for loops *) *)
-(*       beval st b = true -> *)
-(*       kstep (CWhile l b c, k, st) (c, Kwhile l b c k, st) *)
-(*   | KS_WhileFalse : forall st l b c k, *)
-(*       beval st b = false -> *)
-(*       kstep (CWhile l b c, k, st) (SKIP, k, st) *)
+  | KS_WhileTrue : forall st l b c k,  (**r Computation and focusing for loops *)
+      beval st b = true ->
+      kstep (l: WHILE b DO c END, k, st) (c, Kwhile l b c k, st)
+  | KS_WhileFalse : forall st l b c k,
+      beval st b = false ->
+      kstep (l: WHILE b DO c END, k, st) (SKIP, k, st)
 
-(*   | KS_SkipSeq: forall c k st,  (**r Resumption on [SKIP] *) *)
-(*       kstep (SKIP, Kseq c k, st) (c, k, st) *)
-(*   | KS_SkipWhile: forall b c k st l, *)
-(*       kstep (SKIP, Kwhile l b c k, st) (CWhile l b c, k, st) *)
-(*   | KS_BreakNoLabelSeq: forall c k st, *)
-(*       kstep (BREAK, Kseq c k, st) (BREAK, k, st) *)
-(*   | KS_BreakNoLabelWhile: forall b c k st l, *)
-(*       kstep (BREAK, Kwhile l b c k, st) (SKIP, k, st) *)
-(*   | KS_BreakLabelSeq : forall c k st l, *)
-(*       kstep (BREAK l, Kseq c k, st) (BREAK l, k, st) *)
-(*   | KS_BreakDiffLabelWhile : forall b c k st l l', *)
-(*       l <> l' -> *)
-(*       kstep (BREAK l, Kwhile (Some l') b c k, st) (BREAK l, k, st) *)
-(*   | KS_BreakSameLabelWhile : forall c k st l, *)
-(*       kstep (BREAK l, Kwhile (Some l) b c k, st) (SKIP, k, st). *)
-(*   | KS_ContinueSeq: forall c k st, *)
-(*       kstep (CONTINUE, Kseq c k, st) (CONTINUE, k, st) *)
-(*   | KS_ContinueWhile: forall b c k st, *)
-(*       kstep (CONTINUE, Kwhile b c k, st) (c, Kwhile b c k, st). *)
+  | KS_SkipSeq: forall c k st,  (**r Resumption on [SKIP] *)
+      kstep (SKIP, Kseq c k, st) (c, k, st)
+  | KS_SkipWhile: forall b c k st l,
+      kstep (SKIP, Kwhile l b c k, st) (l: WHILE b DO c END, k, st)
+  | KS_BreakSeq: forall c k st l,
+      kstep (BREAK l, Kseq c k, st) (BREAK l, k, st)
+  | KS_BreakWhile: forall b c k st l l',
+      l = None \/ l = l' ->
+      kstep (BREAK l, Kwhile l' b c k, st) (SKIP, k, st)
+  | KS_BreakDiffLabelWhile : forall b c k st l l',
+      l <> l' ->
+      kstep (BREAK (Some l), Kwhile (Some l') b c k, st) (BREAK (Some l), k, st)
+  | KS_ContinueSeq: forall c k st l,
+      kstep (CONTINUE l, Kseq c k, st) (CONTINUE l, k, st)
+  | KS_ContinueWhile : forall l l' b c k st, 
+      l = None \/ l = l' ->
+      kstep (CONTINUE l, Kwhile l' b c k, st) (SKIP, Kwhile l' b c k, st)
+  | KS_ContinueDiffLabelWhile: forall b c k st l l',
+      l <> l' ->
+      kstep (CONTINUE (Some l), Kwhile (Some l') b c k, st) 
+            (CONTINUE (Some l), k, st).
 
-(* End LabeledBreak.  *)
+End LabeledBreak.
 
 (** ** Relating the continuation semantics with the other semantics *)
 
