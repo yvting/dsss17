@@ -10,3 +10,4 @@ Stlc/extra/stlc-rules.tex
 *.fls
 *.fdb_latexmk
 *.log
+#*

@@ -226,7 +226,7 @@ Proof.
 Qed.
 
 (** Sequences of reductions can go under a sequence context, generalizing
-  rule [CS_SeqStep]. *)
+  rule [CS_SeqStep]. *)  
 
 Lemma star_CS_SeqStep:
   forall c2 st c st' c',
@@ -235,7 +235,7 @@ Proof.
   intros. dependent induction H.
 - apply star_refl.
 - destruct b as [c1 st1].
-  apply star_step with (c1;;c2, st1). apply CS_SeqStep. auto. auto.  
+  apply star_step with (c1;;c2, st1). constructor. auto. auto.  
 Qed.
 
 (** We now recall the equivalence result between 
@@ -257,7 +257,7 @@ Proof.
   apply star_one. apply CS_Ass. auto.
 - (* sequence *)
   eapply star_trans. apply star_CS_SeqStep. apply IHceval1.
-  eapply star_step. apply CS_SeqFinish. auto.
+  eapply star_step. apply CS_SeqFinish. apply IHceval2.
 - (* if true *)
   eapply star_step. apply CS_IfTrue. auto. auto.
 - (* if false *)
@@ -288,7 +288,8 @@ Proof.
 - (* CS_Ass *)
   inversion H; subst. apply E_Ass. auto.
 - (* CS_SeqStep *)
-  inversion H; subst. apply E_Seq with st'. eauto. auto.
+  inversion H; subst. apply E_Seq with st'. 
+  apply IHSTEP with (c2:=c1') (st4:=st2); try reflexivity. assumption. auto.
 - (* CS_SeqFinish *)
   apply E_Seq with st2. apply E_Skip. auto.
 - (* CS_IfTrue *)
@@ -460,12 +461,161 @@ Definition kdiverges (c: com) (st: state) : Prop :=
   the loop like "break" does). Give the transition rules
   for the "continue" statement. *)
 
+Module BreakCont.
+
+Inductive com : Type :=
+  | CSkip : com
+  | CBreak : com               (* <-- new *)
+  | CContinue : com
+  | CAss : id -> aexp -> com
+  | CSeq : com -> com -> com
+  | CIf : bexp -> com -> com -> com
+  | CWhile : bexp -> com -> com.
+
+Notation "'SKIP'" :=
+  CSkip.
+Notation "'BREAK'" :=
+  CBreak.
+Notation "'CONTINUE'" :=
+  CContinue.
+Notation "x '::=' a" :=
+  (CAss x a) (at level 60).
+Notation "c1 ;; c2" :=
+  (CSeq c1 c2) (at level 80, right associativity).
+Notation "'WHILE' b 'DO' c 'END'" :=
+  (CWhile b c) (at level 80, right associativity).
+Notation "'IFB' c1 'THEN' c2 'ELSE' c3 'FI'" :=
+  (CIf c1 c2 c3) (at level 80, right associativity).
+  
+Inductive cont : Type :=
+  | Kstop : cont
+  | Kseq : com -> cont -> cont
+  | Kwhile : bexp -> com -> cont -> cont.
+
+Inductive kstep : (com * cont * state) -> (com * cont * state) -> Prop :=
+
+  | KS_Ass : forall st i a k n,            (**r Computation for assignments *)
+      aeval st a = n ->
+      kstep ((i ::= a), k, st) (SKIP, k, t_update st i n)
+
+  | KS_Seq : forall st c1 c2 k,  (**r Focusing on the left part of a sequence *)
+      kstep ((c1 ;; c2), k, st) (c1, Kseq c2 k, st)
+
+  | KS_IfTrue : forall st b c1 c2 k,  (**r Computation for conditionals *)
+      beval st b = true ->
+      kstep (IFB b THEN c1 ELSE c2 FI, k, st) (c1, k, st)
+  | KS_IfFalse : forall st b c1 c2 k,
+      beval st b = false ->
+      kstep (IFB b THEN c1 ELSE c2 FI, k, st) (c2, k, st)
+
+  | KS_WhileTrue : forall st b c k,  (**r Computation and focusing for loops *)
+      beval st b = true ->
+      kstep (WHILE b DO c END, k, st) (c, Kwhile b c k, st)
+  | KS_WhileFalse : forall st b c k,
+      beval st b = false ->
+      kstep (WHILE b DO c END, k, st) (SKIP, k, st)
+
+  | KS_SkipSeq: forall c k st,  (**r Resumption on [SKIP] *)
+      kstep (SKIP, Kseq c k, st) (c, k, st)
+  | KS_SkipWhile: forall b c k st,
+      kstep (SKIP, Kwhile b c k, st) (WHILE b DO c END, k, st)
+  | KS_BreakSeq: forall c k st,
+      kstep (BREAK, Kseq c k, st) (BREAK, k, st)
+  | KS_BreakWhile: forall b c k st,
+      kstep (BREAK, Kwhile b c k, st) (SKIP, k, st)
+  | KS_ContinueSeq: forall c k st,
+      kstep (CONTINUE, Kseq c k, st) (CONTINUE, k, st)
+  | KS_ContinueWhile: forall b c k st,
+      kstep (CONTINUE, Kwhile b c k, st) (c, Kwhile b c k, st).
+
+End BreakCont. 
+
 (** *** Exercise (3 stars, optional) *)
 (** In Java, loops as well as "break" and "continue" statements carry
   an optional label.  "break" without a label exits out of the immediately
   enclosing loop, but "break lbl" exits out of the first enclosing loop
   that carries the label "lbl".  Similarly for "continue".
   Give the transition rules for "break lbl" and "continue lbl". *)
+
+(* Module LabeledBreak. *)
+
+(* Definition label : Type := nat. *)
+
+(* Inductive com : Type := *)
+(*   | CSkip : com *)
+(*   | CBreak : option label -> com               (* <-- new *) *)
+(*   | CContinue : option label -> com *)
+(*   | CAss : id -> aexp -> com *)
+(*   | CSeq : com -> com -> com *)
+(*   | CIf : bexp -> com -> com -> com *)
+(*   | CWhile : option label -> bexp -> com -> com. *)
+
+(* Notation "'SKIP'" := *)
+(*   CSkip. *)
+(* Notation "'BREAK'" := *)
+(*   (CBreak None) (at level 80). *)
+(* Notation "'BREAK' l" := *)
+(*   (CBreak l) (at level 80). *)
+(* Notation "'CONTINUE' l" := *)
+(*   (CContinue l) (at level 80). *)
+(* Notation "x '::=' a" := *)
+(*   (CAss x a) (at level 60). *)
+(* Notation "c1 ;; c2" := *)
+(*   (CSeq c1 c2) (at level 80, right associativity). *)
+(* Notation "l : 'WHILE' b 'DO' c 'END'" := *)
+(*   (CWhile l b c) (at level 80, right associativity). *)
+(* Notation "'IFB' c1 'THEN' c2 'ELSE' c3 'FI'" := *)
+(*   (CIf c1 c2 c3) (at level 80, right associativity). *)
+  
+(* Inductive cont : Type := *)
+(*   | Kstop : cont *)
+(*   | Kseq : com -> cont -> cont *)
+(*   | Kwhile : option label -> bexp -> com -> cont -> cont. *)
+
+(* Inductive kstep : (com * cont * state) -> (com * cont * state) -> Prop := *)
+
+(*   | KS_Ass : forall st i a k n,            (**r Computation for assignments *) *)
+(*       aeval st a = n -> *)
+(*       kstep ((i ::= a), k, st) (SKIP, k, t_update st i n) *)
+
+(*   | KS_Seq : forall st c1 c2 k,  (**r Focusing on the left part of a sequence *) *)
+(*       kstep ((c1 ;; c2), k, st) (c1, Kseq c2 k, st) *)
+
+(*   | KS_IfTrue : forall st b c1 c2 k,  (**r Computation for conditionals *) *)
+(*       beval st b = true -> *)
+(*       kstep (IFB b THEN c1 ELSE c2 FI, k, st) (c1, k, st) *)
+(*   | KS_IfFalse : forall st b c1 c2 k, *)
+(*       beval st b = false -> *)
+(*       kstep (IFB b THEN c1 ELSE c2 FI, k, st) (c2, k, st) *)
+
+(*   | KS_WhileTrue : forall st l b c k,  (**r Computation and focusing for loops *) *)
+(*       beval st b = true -> *)
+(*       kstep (CWhile l b c, k, st) (c, Kwhile l b c k, st) *)
+(*   | KS_WhileFalse : forall st l b c k, *)
+(*       beval st b = false -> *)
+(*       kstep (CWhile l b c, k, st) (SKIP, k, st) *)
+
+(*   | KS_SkipSeq: forall c k st,  (**r Resumption on [SKIP] *) *)
+(*       kstep (SKIP, Kseq c k, st) (c, k, st) *)
+(*   | KS_SkipWhile: forall b c k st l, *)
+(*       kstep (SKIP, Kwhile l b c k, st) (CWhile l b c, k, st) *)
+(*   | KS_BreakNoLabelSeq: forall c k st, *)
+(*       kstep (BREAK, Kseq c k, st) (BREAK, k, st) *)
+(*   | KS_BreakNoLabelWhile: forall b c k st l, *)
+(*       kstep (BREAK, Kwhile l b c k, st) (SKIP, k, st) *)
+(*   | KS_BreakLabelSeq : forall c k st l, *)
+(*       kstep (BREAK l, Kseq c k, st) (BREAK l, k, st) *)
+(*   | KS_BreakDiffLabelWhile : forall b c k st l l', *)
+(*       l <> l' -> *)
+(*       kstep (BREAK l, Kwhile (Some l') b c k, st) (BREAK l, k, st) *)
+(*   | KS_BreakSameLabelWhile : forall c k st l, *)
+(*       kstep (BREAK l, Kwhile (Some l) b c k, st) (SKIP, k, st). *)
+(*   | KS_ContinueSeq: forall c k st, *)
+(*       kstep (CONTINUE, Kseq c k, st) (CONTINUE, k, st) *)
+(*   | KS_ContinueWhile: forall b c k st, *)
+(*       kstep (CONTINUE, Kwhile b c k, st) (c, Kwhile b c k, st). *)
+
+(* End LabeledBreak.  *)
 
 (** ** Relating the continuation semantics with the other semantics *)
 

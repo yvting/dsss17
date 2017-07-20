@@ -221,7 +221,7 @@ Module Opsem.
   *)
   (**  ------------------------------------------------------------------------- *)  
   
-  Fixpoint eval_step (g : Cfg.t) (s : state) : err state :=
+  Definition eval_step (g : Cfg.t) (s : state) : err state :=
     let 'mkst mem pc loc ppc ploc := s in
     '(uid, insn) <- trywith "no instruction fetched" (Cfg.fetch g pc); 
     match insn with
