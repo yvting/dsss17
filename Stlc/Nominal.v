@@ -21,11 +21,11 @@ Require Export Metalib.Metatheory.
 
 (** Although we are not using LNgen, some of the tactics from
     its library are useful for automating reasoning about
-    names.  *)
+    names (i.e. atoms).  *)
 Require Export Metalib.LibLNgen.
 
 
-(** Some fresh variables *)
+(** Some fresh atoms *)
 Notation X := (fresh nil).
 Notation Y := (fresh (X :: nil)).
 Notation Z := (fresh (X :: Y :: nil)).
@@ -36,6 +36,7 @@ Proof.
   apply elim_not_In_cons in H.
   auto.
 Qed.
+
 
 (*************************************************************)
 (** * A nominal representation of terms                      *)
@@ -172,6 +173,11 @@ Proof.
   simpl; unfold swap_var; default_simp.
 Qed.
 
+Lemma aeq_refl : forall n, aeq n n.
+Proof.
+  induction n; auto.
+Qed.
+
 (*************************************************************)
 (** ** Properties about swapping                             *)
 (*************************************************************)
@@ -195,14 +201,14 @@ Lemma fv_nom_swap : forall z y n,
 Proof.
   (* WORKED IN CLASS *)
   induction n; intros; simpl; unfold swap_var; default_simp.
-Qed.
+Qed. 
 Lemma shuffle_swap : forall w y n z,
     w <> z -> y <> z ->
     (swap w y (swap y z n)) = (swap w z (swap w y n)).
 Proof.
   (* WORKED IN CLASS *)
   induction n; intros; simpl; unfold swap_var; default_simp.
-Qed.
+Qed. 
 (*************************************************************)
 (** ** Exercises                                             *)
 (*************************************************************)
@@ -224,12 +230,16 @@ Lemma swap_involutive : forall t x y,
 Proof.
   (* FILL IN HERE *) Admitted.
 
-(** *** Challenge exercise: equivariance
+(** *** Challenge exercises: equivariance
 
     Equivariance is the property that all functions and
-    relations are preserved under swapping. (Hint:
-    [default_simp] will be slow on some of these properties, and
-    sometimes won't be able to do them automatically.)  *)
+    relations are preserved under swapping.  Show that this
+    holds for the various functions and relations below.
+
+    (Hint: [default_simp] will be slow and sometimes
+    ineffective on *some* of these properties. If it puts
+    you in an dead-end state, you'll need to prove the
+    lemm another way. *)
 
 Lemma swap_var_equivariance : forall v x y z w,
     swap_var x y (swap_var z w v) =
@@ -276,7 +286,7 @@ Proof.
     will be between _machine configurations_, not just
     expressions.
 
-    Our abstract machine configurations have three components:
+    Our abstract machine configurations have three components
 
     - the current expression being evaluated the heap (aka
     - environment): a mapping between variables and expressions
@@ -284,7 +294,7 @@ Proof.
     - expression
 
     Because we have a heap, we don't need to use substitution
-    to define our semantics! To implement [x ~> e] we add a
+    to define our semantics. To implement [x ~> e] we add a
     definition that [x] maps to [e] in the heap and then look
     up the definition when we get to [x] during evaluation.  *)
 
@@ -320,8 +330,8 @@ Definition machine_step (avoid : atoms) (c : configuration) : Step configuration
         match t with
         | n_abs x t1 =>
           (* if the bound name [x] is not fresh, we need to rename it *)
-          if AtomSetProperties.In_dec x (dom h `union` avoid)  then
-            let (y,_) := atom_fresh (dom h `union` avoid) in
+          if AtomSetProperties.In_dec x avoid  then
+            let (y,_) := atom_fresh avoid in
              TakeStep _ ((y,t2)::h, swap x y t1, s')
           else
             TakeStep _ ((x,t2)::h, t1, s')
@@ -330,7 +340,7 @@ Definition machine_step (avoid : atoms) (c : configuration) : Step configuration
       end
     else match t with
          | n_var x => match get x h with
-                     | Some t1  => TakeStep _ (h, t1, s)
+                     | Some t1 => TakeStep _ (h, t1, s)
                      | None    => Error _ (* Unbound variable *)
                      end
          | n_app t1 t2 => TakeStep _ (h, t1, n_app2 t2 :: s)
@@ -341,18 +351,18 @@ Definition machine_step (avoid : atoms) (c : configuration) : Step configuration
 Definition initconf (t : n_exp) : configuration := (nil,t,nil).
 
 
-(** Example: evaluation of  "(\y. (\x. x) y) Z"
+(** Example: evaluation of  "(\y. (\x. x) y) 3"
 
 <<
      machine                                       corresponding term
 
-      {}, (\y. (\x. x) y) Z , nil                  (\y. (\x. x) y) Z
-  ==> {}, (\y. (\x. x) y), n_app2 Z :: nil         (\y. (\x. x) y) Z
-  ==> {y -> Z}, (\x.x) y, nil                      (\x. x) Z
-  ==> {y -> Z}, (\x.x), n_app2 y :: nil            (\x. x) Z
-  ==> {x -> y, y -> Z}, x, nil                     Z
-  ==> {x -> y, y -> Z}, y, nil                     Z
-  ==> {x -> y, y -> Z}, Z, nil                     Z
+      {}, (\y. (\x. x) y) 3, nil                   (\y. (\x. x) y) 3
+  ==> {}, (\y. (\x. x) y), n_app2 3 :: nil         (\y. (\x. x) y) 3
+  ==> {y -> 3}, (\x.x) y, nil                      (\x. x) 3
+  ==> {y -> 3}, (\x.x), n_app2 y :: nil            (\x. x) 3
+  ==> {x -> y, y -> 3}, x, nil                     3
+  ==> {x -> y, y -> 3}, y, nil                     3
+  ==> {x -> y, y -> 3}, 3, nil                     3
   ==> Done
 >>
 
@@ -416,11 +426,17 @@ Fixpoint subst_rec (n:nat) (t:n_exp) (u :n_exp) (x:atom)  : n_exp :=
   match n with
   | 0 => t
   | S m => match t with
-          | n_var y => if (x == y) then u else t
-          | n_abs y t1 => if (x == y) then t
-                        else let (z,_) := atom_fresh (fv_nom u \u fv_nom t) in
-                             n_abs z (subst_rec m (swap y z t1) u x)
-          | n_app t1 t2 => n_app (subst_rec m t1 u x) (subst_rec m t2 u x)
+          | n_var y =>
+            if (x == y) then u else t
+          | n_abs y t1 =>
+            if (x == y) then t
+            else
+              (* rename to avoid capture *)
+              let (z,_) :=
+                  atom_fresh (fv_nom u `union` fv_nom t `union` {{x}}) in
+                 n_abs z (subst_rec m (swap y z t1) u x)
+          | n_app t1 t2 =>
+            n_app (subst_rec m t1 u x) (subst_rec m t2 u x)
           end
   end.
 
@@ -474,6 +490,37 @@ Proof. (* FILL IN HERE *) Admitted.
 Lemma subst_abs : forall u x y t1,
     subst u x (n_abs y t1) =
        if (x == y) then (n_abs y t1)
-       else let (z,_) := atom_fresh (fv_nom u \u fv_nom (n_abs y t1)) in
+       else let (z,_) := atom_fresh (fv_nom u `union` fv_nom (n_abs y t1) `union` {{x}}) in
        n_abs z (subst u x (swap y z t1)).
 Proof. (* FILL IN HERE *) Admitted.
+
+
+(** ** Challenge Exercise [subst properties]
+
+    Now show the following property by induction on the size of terms. *)
+
+Lemma subst_same_aux : forall n, forall t y, size t <= n -> aeq (subst (n_var y) y t)  t.
+Proof.
+  intro n. induction n.
+  intros t y SZ. destruct t; simpl in SZ; omega.
+  intros t y SZ. destruct t; simpl in SZ.
+(* FILL IN HERE *) Admitted.
+
+Lemma subst_same : forall t y, aeq (subst (n_var y) y t)  t.
+Proof.
+  intros.
+  apply subst_same_aux with (n := size t). auto.
+Qed.
+
+
+Lemma subst_fresh_eq_aux : forall n, forall (x : atom) t u, size t <= n ->
+  x `notin` fv_nom t -> aeq (subst u x t) t.
+Proof. (* FILL IN HERE *) Admitted.
+
+Lemma subst_fresh_eq : forall (x : atom) t u,  x `notin` fv_nom t -> aeq (subst u x t) t.
+Proof.
+  intros. apply subst_fresh_eq_aux with (n := size t). omega. auto.
+Qed.
+
+
+
