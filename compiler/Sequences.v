@@ -129,6 +129,15 @@ Proof.
   intros. cofix COINDHYP. apply infseq_step with a. auto. apply COINDHYP.
 Qed.
 
+(* A proof of the same theorem closer to the Abella proof *)
+Remark cycle_infseq':
+  forall a, R a a -> infseq a.
+Proof.
+  cofix COINDHYP. intros. 
+  apply infseq_step with a. auto. apply COINDHYP. auto.
+Qed.
+
+
 (** This style of proof by coinduction, using the [cofix] tactic, is effective
   but can run into limitations of Coq's proof engine (the so-called 
   "guard condition").  However, we can derive more conventional
@@ -150,6 +159,13 @@ Proof.
   destruct (P a H) as [b [U V]]. apply infseq_step with b; auto. 
 Qed.
 
+Lemma cycle_infseq'' : forall a,
+  R a a -> infseq a.
+Proof.
+  apply infseq_coinduction_principle. intros a H.
+  exists a. split; auto.
+Qed.
+
 (** An even more useful variant of this coinduction principle considers a
   set [X] where for every [a] in [X], we can make one *or several* transitions
   to reach a [b] in [X].  *)
@@ -169,6 +185,37 @@ Proof.
 + exists b0; split. auto. exists b; auto.
 - exists a; split. apply star_refl. auto.
 Qed.
+
+Lemma infseq_aux : forall P X,
+  P = (fun a => exists b, star a b /\ X b) ->
+  (forall a, X a -> exists b, plus a b /\ X b) ->
+  (forall a, P a -> exists b, R a b /\ P b).
+Proof.
+  intros P X H H0 a H1. subst P.
+  destruct H1 as [b [STAR Xb]]. 
+  inversion STAR; subst.
+  - destruct (H0 b Xb) as [c [PLUS Xc]].
+    inversion PLUS; subst.
+    exists b0. split. auto.
+    exists c. split; auto.
+  - exists b0. split. auto. 
+    exists b. split; auto.
+Qed.
+
+Lemma infseq_coinduction_principle_2':
+  forall (X: A -> Prop),
+  (forall a, X a -> exists b, plus a b /\ X b) ->
+  forall a, X a -> infseq a.
+Proof.
+  intros.
+  apply infseq_coinduction_principle with
+    (X := fun a => exists b, star a b /\ X b). 
+  apply infseq_aux with (X := X).
+  - reflexivity.
+  - auto.
+  - exists a. split. apply star_refl. apply H0.
+Qed.
+
 
 (** Here is an example of use of [infseq_coinduction_principle]:
   if all finite transition sequences starting at [a] can be extended,
