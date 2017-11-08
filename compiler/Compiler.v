@@ -222,10 +222,32 @@ Fixpoint mach_interp (C: code) (fuel: nat)
       match code_at C pc, stk with
       | Some Ihalt, nil => Terminates st
       | Some (Iconst n), stk => mach_interp C fuel' (pc + 1) (n :: stk) st
+      | Some (Ivar x), stk => mach_interp C fuel' (pc+1) (st x :: stk) st
+      | Some (Isetvar x), (n::stk) => mach_interp C fuel' (pc+1) stk (t_update st x n)
+      | Some Iadd, (n2::n1::stk) => mach_interp C fuel' (pc+1) ((n1+n2)::stk) st
+      | Some Isub, (n2::n1::stk) => mach_interp C fuel' (pc+1) ((n1-n2)::stk) st
+      | Some Imul, (n2::n1::stk) => mach_interp C fuel' (pc+1) ((n1*n2)::stk) st
+      | Some (Ibranch_forward ofs), stk =>
+        mach_interp C fuel' (pc+1+ofs) stk st
+      | Some (Ibranch_backward ofs), stk =>
+        mach_interp C fuel' (pc+1-ofs) stk st
+      | Some (Ibeq ofs), (n2::n1::stk) =>
+        let ofs' := if beq_nat n1 n2 then 1+ofs else 1 in
+        mach_interp C fuel' (pc+ofs') stk st
+      | Some (Ibne ofs), (n2::n1::stk) =>
+        let ofs' := if beq_nat n1 n2 then 1 else 1+ofs in
+        mach_interp C fuel' (pc+ofs') stk st
+      | Some (Ible ofs), (n2::n1::stk) =>
+        let ofs' := if leb n1 n2 then 1+ofs else 1 in
+        mach_interp C fuel' (pc+ofs') stk st
+      | Some (Ibgt ofs), (n2::n1::stk) =>
+        let ofs' := if leb n1 n2 then 1 else 1+ofs in
+        mach_interp C fuel' (pc+ofs') stk st
       (* FILL IN HERE *)
       | _, _ => GoesWrong
       end
   end.
+
 
 (** * 2. The compilation scheme *)
 
