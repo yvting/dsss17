@@ -233,7 +233,16 @@ Section Counter.
       GenSemPreservesInvariant counter_layerdata decr_counter_high_spec.
     Proof.
       (** TUTORIAL: Prove that decr_counter preserves the layer invariant *)
-    Admitted.
+      split; auto.
+      intros args d res d' j Hsem Hdj Hdi.
+      inv_generic_sem Hsem.
+      inv_monad H0.
+      unfold decr_counter_high_spec in H2.
+      destruct (decide (0 < counter d)%nat).
+      - inv H2. cbn. cbn in Hdi. omega.
+      - discriminate H2.
+    Qed.
+
 
     Definition decr_counter_high_sem : cprimitive counter_layerdata :=
       cgensem counter_layerdata decr_counter_high_spec.
@@ -398,13 +407,13 @@ int decr_counter() {
         (** The [COUNTER] global variable is stored at some memory block [cb] *)
         forall (HCb: find_symbol COUNTER = Some cb),
         (** The value at block [cb] is an integer [i] *)
-        False ->
+        Mem.load Mint32 m cb 0 = Some (Vint i) ->
         (** [i] is less than [MAX_COUNTER] *)
-        False ->
+        Int.unsigned i <  Z.of_nat MAX_COUNTER ->
         (** A new integer [j] is defined as [i + 1] *)
-        False ->
+        j = Int.add i Int.one ->
         (** Storing [j] at block [cb] results in a new memory [m'] *)
-        False ->
+        Mem.store Mint32 m cb 0 (Vint j) = Some m' ->
         (** [incr_counter] takes no arguments, returns [j], changes [m] to
           [m'], and makes no change to abstract state *)
         incr_counter_step incr_counter_csig (nil, (m, d)) (Vint j, (m', d)).
@@ -503,9 +512,27 @@ int decr_counter() {
     Proof.
       code_proof_tac.
       inv CStep.
-      contradiction.
       (** TUTORIAL: Replace invalid contradiction with an actual proof. *)
-    Admitted.
+      cprim_step. repeat step_tac.
+      - cbn.
+        instantiate (1 := (Int.ltu i MAX_COUNTER_i)).
+        destruct (Int.ltu i MAX_COUNTER_i); reflexivity.
+      - destr.
+        + (** i < MAX_COUNTER *)
+          repeat step_tac.
+          * (** Storing i + 1 gives m' *)
+            unfold lift; cbn.
+            rewrite Ptrofs.unsigned_zero. 
+            unfold Int.one in H10. rewrite H10. reflexivity.
+          * (** Loading m' gives i + 1 *)
+            unfold lift; cbn.
+            rewrite Ptrofs.unsigned_zero. 
+            eapply Mem.load_store_same; eauto.
+          * (** Return value is i + 1 *)
+            reflexivity.
+        + (** i >= MAX_COUNTER *)
+          unfold Int.ltu in Heqb. destr_in Heqb; [discriminate | contradiction].
+    Qed.
 
     Lemma decr_counter_code :
       base_L ⊢ (id, Mdecr) : (decr_counter ↦ decr_counter_cprimitive).
@@ -577,7 +604,7 @@ int decr_counter() {
       }.
 
     (** We now wrap our relations and a list of the global variables'
-      initialization information intro an [abrel_components] record and declare
+      initialization information into an [abrel_components] record and declare
       it an instance of [AbstractionRelation]. We must now prove the following
       properties:
 
