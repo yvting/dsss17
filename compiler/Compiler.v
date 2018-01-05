@@ -243,7 +243,6 @@ Fixpoint mach_interp (C: code) (fuel: nat)
       | Some (Ibgt ofs), (n2::n1::stk) =>
         let ofs' := if leb n1 n2 then 1 else 1+ofs in
         mach_interp C fuel' (pc+ofs') stk st
-      (* FILL IN HERE *)
       | _, _ => GoesWrong
       end
   end.
@@ -382,6 +381,62 @@ Compute (compile_program (IFB BEq (AId vx) (ANum 1) THEN vx ::= ANum 0 ELSE SKIP
 
 Definition smart_Ibranch_forward (ofs: nat) : code :=
   if beq_nat ofs 0 then nil else Ibranch_forward(ofs) :: nil.
+
+Module Smart_IBranch.
+
+Fixpoint compile_bexp (b: bexp) (cond: bool) (ofs: nat) : code :=
+  match b with
+  | BTrue =>
+      if cond then (smart_Ibranch_forward ofs) else nil
+  | BFalse =>
+      if cond then nil else smart_Ibranch_forward ofs
+  | BEq a1 a2 =>
+      compile_aexp a1 ++ compile_aexp a2 ++
+      (if cond then Ibeq ofs :: nil else Ibne ofs :: nil)
+  | BLe a1 a2 =>
+      compile_aexp a1 ++ compile_aexp a2 ++
+      (if cond then Ible ofs :: nil else Ibgt ofs :: nil)
+  | BNot b1 =>
+      compile_bexp b1 (negb cond) ofs
+  | BAnd b1 b2 =>
+      let c2 := compile_bexp b2 cond ofs in
+      let c1 := compile_bexp b1 false (if cond then length c2 else ofs + length c2) in
+      c1 ++ c2
+  end.
+
+Fixpoint compile_com (c: com) : code :=
+  match c with
+  | SKIP =>
+      nil
+  | (id ::= a) =>
+      compile_aexp a ++ Isetvar id :: nil
+  | (c1 ;; c2) =>
+      compile_com c1 ++ compile_com c2
+  | IFB b THEN ifso ELSE ifnot FI =>
+      let code_ifso := compile_com ifso in
+      let code_ifnot := compile_com ifnot in
+      compile_bexp b false (length code_ifso + 1)
+      ++ code_ifso
+      ++ smart_Ibranch_forward (length code_ifnot)
+      ++ code_ifnot
+  | WHILE b DO body END =>
+      let code_body := compile_com body in
+      let code_test := compile_bexp b false (length code_body + 1) in
+      code_test
+      ++ code_body
+      ++ Ibranch_backward (length code_test + length code_body + 1)
+      :: nil
+  end.
+
+Definition compile_program (p: com) : code :=
+  compile_com p ++ Ihalt :: nil.
+
+Compute (compile_program (IFB BEq (AId vx) (ANum 1) THEN vx ::= ANum 0 ELSE SKIP FI)).
+
+(** Result is: [ [Ivar vx, Iconst 1, Ibne 3, Iconst 0, Isetvar vx, Ihalt] ] *)
+
+End Smart_IBranch.
+
 
 (** * 3. Semantic preservation *)
 
