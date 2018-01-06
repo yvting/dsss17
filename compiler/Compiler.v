@@ -838,6 +838,296 @@ End SmartBranchProof.
   Hint: study Coq's definition of subtraction between natural numbers
   (do [Print Nat.sub]). *)
 
+Module CheapVM.
+
+Inductive instruction: Type :=
+  | Iconst(n: nat)                 (**r push integer [n] on stack *)
+  | Ivar(x: id)                    (**r push the value of variable [x] *)
+  | Isetvar(x: id)                 (**r pop an integer, assign it to variable [x] *)
+  | Iadd                           (**r pop [n2], pop [n1], push back [n1+n2] *)
+  | Isub                           (**r pop [n2], pop [n1], push back [n1-n2] *)
+  | Imul                           (**r pop [n2], pop [n1], push back [n1*n2] *)
+  | Ibranch_forward(ofs: nat)      (**r skip [ofs] instructions forward *)
+  | Ibranch_backward(ofs: nat)     (**r skip [ofs] instructions backward *)
+  | Ibeq(ofs: nat)                 (**r pop [n2], pop [n1], skip [ofs] forward if [n1=n2] *)
+  | Ibne(ofs: nat)                 (**r pop [n2], pop [n1], skip [ofs] forward if [n1<>n2] *)
+  | Ihalt.                         (**r terminate execution successfully *)
+
+Definition code := list instruction.
+
+Fixpoint code_at (C: code) (pc: nat) : option instruction :=
+  match C, pc with
+  | nil, _ => None
+  | i :: C', O => Some i
+  | i :: C', S pc' => code_at C' pc'
+  end.
+
+Definition stack := list nat.
+
+Definition configuration := (nat * stack * state)%type.
+
+Inductive transition (C: code): configuration -> configuration -> Prop :=
+  | trans_const: forall pc stk s n,
+      code_at C pc = Some(Iconst n) ->
+      transition C (pc, stk, s) (pc + 1, n :: stk, s)
+  | trans_var: forall pc stk s x,
+      code_at C pc = Some(Ivar x) ->
+      transition C (pc, stk, s) (pc + 1, s x :: stk, s)
+  | trans_setvar: forall pc stk s x n,
+      code_at C pc = Some(Isetvar x) ->
+      transition C (pc, n :: stk, s) (pc + 1, stk, t_update s x n)
+  | trans_add: forall pc stk s n1 n2,
+      code_at C pc = Some(Iadd) ->
+      transition C (pc, n2 :: n1 :: stk, s) (pc + 1, (n1 + n2) :: stk, s)
+  | trans_sub: forall pc stk s n1 n2,
+      code_at C pc = Some(Isub) ->
+      transition C (pc, n2 :: n1 :: stk, s) (pc + 1, (n1 - n2) :: stk, s)
+  | trans_mul: forall pc stk s n1 n2,
+      code_at C pc = Some(Imul) ->
+      transition C (pc, n2 :: n1 :: stk, s) (pc + 1, (n1 * n2) :: stk, s)
+  | trans_branch_forward: forall pc stk s ofs pc',
+      code_at C pc = Some(Ibranch_forward ofs) ->
+      pc' = pc + 1 + ofs ->
+      transition C (pc, stk, s) (pc', stk, s)
+  | trans_branch_backward: forall pc stk s ofs pc',
+      code_at C pc = Some(Ibranch_backward ofs) ->
+      pc' = pc + 1 - ofs ->
+      transition C (pc, stk, s) (pc', stk, s)
+  | trans_beq: forall pc stk s ofs n1 n2 pc',
+      code_at C pc = Some(Ibeq ofs) ->
+      pc' = (if beq_nat n1 n2 then pc + 1 + ofs else pc + 1) ->
+      transition C (pc, n2 :: n1 :: stk, s) (pc', stk, s)
+  | trans_bne: forall pc stk s ofs n1 n2 pc',
+      code_at C pc = Some(Ibne ofs) ->
+      pc' = (if beq_nat n1 n2 then pc + 1 else pc + 1 + ofs) ->
+      transition C (pc, n2 :: n1 :: stk, s) (pc', stk, s).
+
+Fixpoint compile_aexp (a: aexp) : code :=
+  match a with
+  | ANum n => Iconst n :: nil
+  | AId v => Ivar v :: nil
+  | APlus a1 a2 => compile_aexp a1 ++ compile_aexp a2 ++ Iadd :: nil
+  | AMinus a1 a2 => compile_aexp a1 ++ compile_aexp a2 ++ Isub :: nil
+  | AMult a1 a2 => compile_aexp a1 ++ compile_aexp a2 ++ Imul :: nil
+  end.
+
+Fixpoint compile_bexp (b: bexp) (cond: bool) (ofs: nat) : code :=
+  match b with
+  | BTrue =>
+      if cond then Ibranch_forward ofs :: nil else nil
+  | BFalse =>
+      if cond then nil else Ibranch_forward ofs :: nil
+  | BEq a1 a2 =>
+      compile_aexp a1 ++ compile_aexp a2 ++ 
+      (if cond then Ibeq ofs :: nil else Ibne ofs :: nil)
+  | BLe a1 a2 =>
+      compile_aexp a1 ++ compile_aexp a2 ++ Isub :: Iconst 0 ::
+      (if cond then Ibeq ofs :: nil else Ibne ofs :: nil)
+  | BNot b1 =>
+      compile_bexp b1 (negb cond) ofs
+  | BAnd b1 b2 =>
+      let c2 := compile_bexp b2 cond ofs in
+      let c1 := compile_bexp b1 false (if cond then length c2 else ofs + length c2) in
+      c1 ++ c2
+  end.
+
+Inductive codeseq_at: code -> nat -> code -> Prop :=
+  | codeseq_at_intro: forall C1 C2 C3 pc,
+      pc = length C1 ->
+      codeseq_at (C1 ++ C2 ++ C3) pc C2.
+
+Lemma code_at_app:
+  forall i c2 c1 pc,
+  pc = length c1 ->
+  code_at (c1 ++ i :: c2) pc = Some i.
+Proof.
+  induction c1; simpl; intros; subst pc; auto.
+Qed.
+
+Lemma codeseq_at_head:
+  forall C pc i C',
+  codeseq_at C pc (i :: C') ->
+  code_at C pc = Some i.
+Proof.
+  intros. inversion H. simpl. apply code_at_app. auto.
+Qed.
+
+Lemma codeseq_at_tail:
+  forall C pc i C',
+  codeseq_at C pc (i :: C') ->
+  codeseq_at C (pc + 1) C'.
+Proof.
+  intros. inversion H. 
+  change (C1 ++ (i :: C') ++ C3)
+    with (C1 ++ (i :: nil) ++ C' ++ C3).
+  rewrite <- app_ass. constructor. rewrite app_length. auto.
+Qed. 
+
+Lemma codeseq_at_app_left:
+  forall C pc C1 C2,
+  codeseq_at C pc (C1 ++ C2) ->
+  codeseq_at C pc C1.
+Proof.
+  intros. inversion H. rewrite app_ass. constructor. auto.
+Qed.
+
+Lemma codeseq_at_app_right:
+  forall C pc C1 C2,
+  codeseq_at C pc (C1 ++ C2) ->
+  codeseq_at C (pc + length C1) C2.
+Proof.
+  intros. inversion H. rewrite app_ass. rewrite <- app_ass. constructor. rewrite app_length. auto.
+Qed.
+
+Lemma codeseq_at_app_right2:
+  forall C pc C1 C2 C3,
+  codeseq_at C pc (C1 ++ C2 ++ C3) ->
+  codeseq_at C (pc + length C1) C2.
+Proof.
+  intros. inversion H. repeat rewrite app_ass. rewrite <- app_ass. constructor. rewrite app_length. auto.
+Qed.
+
+Hint Resolve codeseq_at_head codeseq_at_tail codeseq_at_app_left codeseq_at_app_right codeseq_at_app_right2: codeseq.
+
+(** ** Correctness of generated code for expressions. *)
+
+Lemma compile_aexp_correct:
+  forall C st a pc stk,
+  codeseq_at C pc (compile_aexp a) ->
+  star (transition C)
+       (pc, stk, st)
+       (pc + length (compile_aexp a), aeval st a :: stk, st).
+Proof.
+  induction a; simpl; intros.
+
+- (* ANum *)
+  apply star_one. apply trans_const. eauto with codeseq. 
+
+- (* AId *)
+  apply star_one. apply trans_var. eauto with codeseq. 
+
+- (* APlus *)
+  eapply star_trans.
+  apply IHa1. eauto with codeseq. 
+  eapply star_trans.
+  apply IHa2. eauto with codeseq. 
+  apply star_one. normalize. apply trans_add. eauto with codeseq. 
+
+- (* AMinus *)
+  eapply star_trans.
+  apply IHa1. eauto with codeseq. 
+  eapply star_trans.
+  apply IHa2. eauto with codeseq. 
+  apply star_one. normalize. apply trans_sub. eauto with codeseq. 
+
+- (* AMult *)
+  eapply star_trans.
+  apply IHa1. eauto with codeseq. 
+  eapply star_trans.
+  apply IHa2. eauto with codeseq. 
+  apply star_one. normalize. apply trans_mul. eauto with codeseq. 
+Qed.
+
+(** Here is a similar proof for the compilation of boolean expressions. *)
+
+Lemma leb_eqb_equiv : forall n1 n2, (Nat.leb n1 n2) = (Nat.eqb (n1 - n2) 0).
+Proof. 
+  induction n1 as [|n1'].
+  - destruct n2 as [|n2']; simpl; reflexivity.
+  - destruct n2 as [|n2']; simpl.
+    + reflexivity.
+    + apply IHn1'.
+Qed.
+
+Lemma compile_bexp_correct:
+  forall C st b cond ofs pc stk,
+  codeseq_at C pc (compile_bexp b cond ofs) ->
+  star (transition C)
+       (pc, stk, st)
+       (pc + length (compile_bexp b cond ofs) + if eqb (beval st b) cond then ofs else 0, stk, st).
+Proof.
+  induction b; simpl; intros.
+
+- (* BTrue *)
+  destruct cond; simpl.
+  + (* BTrue, true *)
+    apply star_one. apply trans_branch_forward with ofs. eauto with codeseq. auto.
+  + (* BTrue, false *)
+    repeat rewrite plus_0_r. apply star_refl.
+ 
+- (* BFalse *)
+  destruct cond; simpl.
+  + (* BFalse, true *)
+    repeat rewrite plus_0_r. apply star_refl.
+  + (* BFalse, false *)
+    apply star_one. apply trans_branch_forward with ofs. eauto with codeseq. auto.
+
+- (* BEq *)
+  eapply star_trans. 
+  apply compile_aexp_correct with (a := a). eauto with codeseq. 
+  eapply star_trans.
+  apply compile_aexp_correct with (a := a0). eauto with codeseq. 
+  apply star_one. normalize.
+  destruct cond.
+  + (* BEq, true *)
+    apply trans_beq with ofs. eauto with codeseq.
+    destruct (beq_nat (aeval st a) (aeval st a0)); simpl; omega.
+  + (* BEq, false *)
+    apply trans_bne with ofs. eauto with codeseq. 
+    destruct (beq_nat (aeval st a) (aeval st a0)); simpl; omega.
+
+- (* BLe *)
+  eapply star_trans. 
+  apply compile_aexp_correct with (a := a). eauto with codeseq. 
+  eapply star_trans.
+  apply compile_aexp_correct with (a := a0). eauto with codeseq. 
+  eapply star_trans.
+  apply star_one. apply trans_sub. eauto with codeseq.
+  eapply star_trans. 
+  apply star_one. apply trans_const. eauto with codeseq.
+  apply star_one. normalize.
+  destruct cond.
+  + (* BLe, true *)
+    apply trans_beq with ofs. 
+    apply codeseq_at_head with nil. eauto with codeseq.
+    rewrite <- leb_eqb_equiv.
+    destruct (Nat.leb (aeval st a) (aeval st a0)); simpl; omega.
+  + (* BLe, false *)
+    apply trans_bne with ofs. 
+    apply codeseq_at_head with nil. eauto with codeseq. 
+    rewrite <- leb_eqb_equiv.
+    destruct (Nat.leb (aeval st a) (aeval st a0)); simpl; omega.
+
+- (* BNot *)
+  replace (eqb (negb (beval st b)) cond)
+     with (eqb (beval st b) (negb cond)).
+  apply IHb; auto. 
+  destruct (beval st b); destruct cond; auto.
+
+- (* BAnd *)
+  set (code_b2 := compile_bexp b2 cond ofs) in *.
+  set (ofs' := if cond then length code_b2 else ofs + length code_b2) in *.
+  set (code_b1 := compile_bexp b1 false ofs') in *.
+  apply star_trans with (pc + length code_b1 + (if eqb (beval st b1) false then ofs' else 0), stk, st).
+  apply IHb1. eauto with codeseq.
+  destruct cond.
+  + (* BAnd, true *)
+    destruct (beval st b1); simpl.
+    * (* b1 evaluates to true *)
+      normalize. apply IHb2. eauto with codeseq. 
+    * (* b1 evaluates to false *)
+      normalize. apply star_refl.
+  + (* BAnd, false *)
+    destruct (beval st b1); simpl.
+    * (* b1 evaluates to true *)
+      normalize. apply IHb2. eauto with codeseq. 
+    * (* b1 evaluates to false *)
+      replace ofs' with (length code_b2 + ofs). normalize. apply star_refl.
+      unfold ofs'; omega.
+Qed.
+
+End CheapVM.
+
 (** ** Correctness of generated code for commands: general case. *)
 
 (** We would like to strengthen the correctness result above so that it
