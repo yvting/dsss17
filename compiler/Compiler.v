@@ -384,26 +384,6 @@ Definition smart_Ibranch_forward (ofs: nat) : code :=
 
 Module Smart_IBranch.
 
-Fixpoint compile_bexp (b: bexp) (cond: bool) (ofs: nat) : code :=
-  match b with
-  | BTrue =>
-      if cond then (smart_Ibranch_forward ofs) else nil
-  | BFalse =>
-      if cond then nil else smart_Ibranch_forward ofs
-  | BEq a1 a2 =>
-      compile_aexp a1 ++ compile_aexp a2 ++
-      (if cond then Ibeq ofs :: nil else Ibne ofs :: nil)
-  | BLe a1 a2 =>
-      compile_aexp a1 ++ compile_aexp a2 ++
-      (if cond then Ible ofs :: nil else Ibgt ofs :: nil)
-  | BNot b1 =>
-      compile_bexp b1 (negb cond) ofs
-  | BAnd b1 b2 =>
-      let c2 := compile_bexp b2 cond ofs in
-      let c1 := compile_bexp b1 false (if cond then length c2 else ofs + length c2) in
-      c1 ++ c2
-  end.
-
 Fixpoint compile_com (c: com) : code :=
   match c with
   | SKIP =>
@@ -415,7 +395,8 @@ Fixpoint compile_com (c: com) : code :=
   | IFB b THEN ifso ELSE ifnot FI =>
       let code_ifso := compile_com ifso in
       let code_ifnot := compile_com ifnot in
-      compile_bexp b false (length code_ifso + 1)
+      compile_bexp b false 
+        (length code_ifso + length (smart_Ibranch_forward (length code_ifnot)))
       ++ code_ifso
       ++ smart_Ibranch_forward (length code_ifnot)
       ++ code_ifnot
@@ -735,14 +716,118 @@ Qed.
   adapt the proof of [compile_com_correct_terminating] accordingly.
   The following lemma will come handy: *)
 
+Module SmartBranchProof.
+
 Lemma trans_smart_branch_forward:
   forall C ofs pc stk st,
   codeseq_at C pc (smart_Ibranch_forward ofs) ->
   star (transition C) (pc, stk, st) (pc + length (smart_Ibranch_forward ofs) + ofs, stk, st).
 Proof.
   unfold smart_Ibranch_forward; intros.
-  (* FILL IN HERE *)
-Admitted.
+  destruct ofs as [|ofs']; simpl in *.
+  (* ofs = 0 *)
+  normalize. apply star_refl.
+  (* ofs > 0 *)
+  apply star_one. apply trans_branch_forward with (S ofs').
+  eauto with codeseq. auto.
+Qed.
+
+Fixpoint compile_com (c: com) : code :=
+  match c with
+  | SKIP =>
+      nil
+  | (id ::= a) =>
+      compile_aexp a ++ Isetvar id :: nil
+  | (c1 ;; c2) =>
+      compile_com c1 ++ compile_com c2
+  | IFB b THEN ifso ELSE ifnot FI =>
+      let code_ifso := compile_com ifso in
+      let code_ifnot := compile_com ifnot in
+      compile_bexp b false 
+         (length code_ifso + length(smart_Ibranch_forward (length code_ifnot)))
+      ++ code_ifso
+      ++ smart_Ibranch_forward (length code_ifnot)
+      ++ code_ifnot
+  | WHILE b DO body END =>
+      let code_body := compile_com body in
+      let code_test := compile_bexp b false (length code_body + 1) in
+      code_test
+      ++ code_body
+      ++ Ibranch_backward (length code_test + length code_body + 1)
+      :: nil
+  end.
+
+Lemma compile_com_correct_terminating:
+  forall C st c st',
+  c / st \\ st' ->
+  forall stk pc,
+  codeseq_at C pc (compile_com c) ->
+  star (transition C)
+       (pc, stk, st)
+       (pc + length (compile_com c), stk, st').
+Proof.
+  induction 1; intros stk pc AT.
+
+- (* SKIP *)
+  simpl in *. rewrite plus_0_r. apply star_refl.
+
+- (* := *)
+  simpl in *. subst n.
+  eapply star_trans. apply compile_aexp_correct. eauto with codeseq.
+  apply star_one. normalize. apply trans_setvar. eauto with codeseq. 
+
+- (* sequence *)
+  simpl in *.
+  eapply star_trans. apply IHceval1. eauto with codeseq. 
+  normalize. apply IHceval2. eauto with codeseq. 
+
+- (* if true *)
+  simpl in *.
+  set (code1 := compile_com c1) in *.
+  set (codeb := compile_bexp b false (length code1 + length (smart_Ibranch_forward (length (compile_com c2))))) in *.
+  set (code2 := compile_com c2) in *.
+  eapply star_trans. 
+  apply compile_bexp_correct with (b := b) (cond := false) 
+    (ofs := length code1 + length (smart_Ibranch_forward (length (compile_com c2)))).
+  eauto with codeseq. 
+  rewrite H. simpl. rewrite plus_0_r. fold codeb. normalize.
+  eapply star_trans. apply IHceval. eauto with codeseq. 
+  eapply trans_smart_branch_forward. eauto with codeseq.
+
+- (* if false *)
+  simpl in *.
+  set (code1 := compile_com c1) in *.
+  set (codeb := compile_bexp b false (length code1 + length (smart_Ibranch_forward (length (compile_com c2))))) in *.
+  set (code2 := compile_com c2) in *.
+  eapply star_trans. 
+  apply compile_bexp_correct with (b := b) (cond := false) (ofs := length code1 + length (smart_Ibranch_forward (length (compile_com c2)))).
+  eauto with codeseq. 
+  rewrite H. simpl. fold codeb. normalize.
+  replace (pc + length codeb + length code1 + S(length code2))
+     with (pc + length codeb + length code1 + 1 + length code2).
+  apply IHceval. eauto with codeseq. omega. 
+
+- (* while false *)
+  simpl in *. 
+  eapply star_trans.
+  apply compile_bexp_correct with (b := b) (cond := false) (ofs := length (compile_com c) + 1). 
+  eauto with codeseq.
+  rewrite H. simpl. normalize. apply star_refl.
+
+- (* while true *)
+  apply star_trans with (pc, stk, st').
+  simpl in *.
+  eapply star_trans.
+  apply compile_bexp_correct with (b := b) (cond := false) (ofs := length (compile_com c) + 1). 
+  eauto with codeseq. 
+  rewrite H; simpl. rewrite plus_0_r.
+  eapply star_trans. apply IHceval1. eauto with codeseq. 
+  apply star_one.
+  eapply trans_branch_backward. eauto with codeseq. omega.
+  apply IHceval2. auto.
+Qed.
+
+End SmartBranchProof.
 
 (** *** Exercise (3 stars, optional) *)
 (** The manufacturer of our virtual machine offers a cheaper variant
