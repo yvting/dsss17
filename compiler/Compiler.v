@@ -1269,6 +1269,31 @@ It would be equivalent to state:
 However, the formulation above, with the "star" case, is often more convenient.
 *)
 
+Definition targ_step1 {A:Type} (R: A -> A -> Prop) 
+  (s e: A) (ms me:nat) : Prop :=
+  plus R s e \/ (star R s e /\ me < ms).
+
+Definition targ_step2 {A:Type} (R: A -> A -> Prop) 
+  (s e: A) (ms me:nat) : Prop :=
+  plus R s e \/ (s = e /\ me < ms).
+
+Theorem targ_step_equiv : forall {A:Type} (R: A -> A -> Prop)
+  (s e:A) (ms me:nat),
+  targ_step1 R s e ms me <-> targ_step2 R s e ms me.
+Proof.
+  split; unfold targ_step1, targ_step2; intros.
+  (* -> *)
+  - destruct H.
+    + left. auto.
+    + destruct H. inversion H; subst.
+      * right. auto.
+      * left. apply plus_left with b; assumption.
+  - destruct H.
+    + left. assumption.
+    + destruct H. right. subst. 
+      split. apply star_refl. auto.
+Qed.
+
 (** Finding an appropriate "anti-stuttering" measure is a bit of a black art.
 After trial and error, we find that the following measure works.  It is
 the sum of the sizes of the command [c] under focus and all the commands
