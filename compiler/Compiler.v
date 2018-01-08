@@ -2186,11 +2186,30 @@ Fixpoint code_at (C: code) (pc: nat) : option instruction :=
 >>
 *)
 
-Definition get_nth_slot (s: stack) (n: nat) : option nat :=
-  None. (* FILL HERE *)
+Fixpoint get_nth_slot_aux (s: stack) (n: nat) : option nat :=
+  match s,n with
+  | nil, _ => None
+  | v::s', 0 => Some v
+  | v::s', S n' => get_nth_slot_aux s' n'
+  end.
 
-Fixpoint set_nth_slot (s: stack) (n: nat) (v: nat) : option stack :=
-  None. (* FILL HERE *)
+Fixpoint get_nth_slot (s:stack) (n:nat) : option nat :=
+  get_nth_slot_aux (List.rev s) n.
+
+Fixpoint set_nth_slot_aux (s: stack) (n: nat) (v: nat) : option stack :=
+  match s,n with
+  | nil, _ => None
+  | v'::s', 0 => Some (v::s')
+  | v'::s', S n' => 
+    match (set_nth_slot_aux s' n' v) with
+    | None => None
+    | Some news => Some (v'::news)
+    end
+  end.
+
+Fixpoint set_nth_slot (s:stack) (n:nat) (v:nat) : option stack :=
+  set_nth_slot_aux (List.rev s) n v.
+
 
 (** Then, the semantics of the machine is given by the following transition
   relation.  Note that machine states are just pairs of a program counter
