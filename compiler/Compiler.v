@@ -1288,6 +1288,7 @@ Proof.
     + destruct H. inversion H; subst.
       * right. auto.
       * left. apply plus_left with b; assumption.
+  (* <- *)
   - destruct H.
     + left. assumption.
     + destruct H. right. subst. 
@@ -1567,6 +1568,43 @@ Proof.
       exists b; exists S2'; split. eapply plus_left; eauto. auto.
 Qed.
 
+Lemma simulation_infseq_productive':
+  forall N S1 S2,
+  measure S1 < N ->
+  infseq step1 S1 ->
+  match_states S1 S2 ->
+  exists S1', exists S2',
+      plus step1 S1 S1'
+   /\ plus step2 S2 S2'
+   /\ infseq step1 S1'
+   /\ match_states S1' S2'.
+Proof.
+  induction N; intros. 
+- (* N = 0 *)
+  exfalso. omega.
+- (* N > 0 *)
+  inversion H0; clear H0; subst.
+  destruct (simulation _ _ _ H2 H1) as [S2' [P Q]].
+  destruct P.
+  + (* one or several transitions *)
+    exists b; exists S2'; split; auto. apply plus_one. auto.
+  + (* zero, one or several transitions *)
+    destruct H0. inversion H0; clear H0; subst.
+    * (* zero transitions *)
+      assert (  
+        exists (S1' : state1) (S2'0 : state2),
+          plus step1 b S1' /\
+          plus step2 S2' S2'0 /\
+          infseq step1 S1' /\ match_states S1' S2'0).
+      eapply IHN; eauto. omega.
+      destruct H0 as (S1' & S3' & PSTEP1 & PSTEP2 & INF & MATCH).
+      exists S1'; exists S3'; split.
+      eapply plus_left; eauto. apply plus_star. auto. auto.
+    * (* one or several transitions *)
+      exists b; exists S2'; split. apply plus_one; auto. 
+      split. eapply plus_left; eauto. auto.
+Qed.
+
 (** It follows that the target performs infinitely many transitions if
   started in a configuration that matches a diverging source configuration. *)
 
@@ -1579,7 +1617,7 @@ Proof.
   intros. 
   apply infseq_coinduction_principle_2 with
     (X := fun S2 => exists S1, infseq step1 S1 /\ match_states S1 S2).
-  intros. destruct H1 as [S [A B]]. 
+  intros. destruct H1 as (S & A & B). 
   destruct (simulation_infseq_productive (measure S + 1) S a) 
   as [S1' [S2' [P [Q R]]]].
   omega. auto. auto.
@@ -1683,8 +1721,51 @@ Lemma compile_aexp_gen_correct:
        (pc + length (compile_aexp_gen ord a), aeval st a :: stk, st).
 Proof.
   induction a; simpl; intros.
-  (* FILL IN HERE *)
-Admitted.
+  - (* ANum *)
+    apply star_one. apply trans_const. eauto with codeseq.
+  - (* AId *)
+    apply star_one. apply trans_var. eauto with codeseq.
+  - (* APlus *)
+    set (codea1 := compile_aexp_gen ord a1) in *.
+    set (codea2 := compile_aexp_gen ord a2) in *.
+    destruct (ord a1 a2).
+    + (* Eval left first *)
+      eapply star_trans. apply IHa1. eauto with codeseq.
+      eapply star_trans. apply IHa2. eauto with codeseq.
+      normalize. apply star_one. apply trans_add. 
+      eauto with codeseq.
+    + (* Eval right first *)
+      eapply star_trans. apply IHa2. eauto with codeseq.
+      eapply star_trans. apply IHa1. eauto with codeseq.
+      normalize. apply star_one. 
+      replace (aeval st a1 + aeval st a2) with
+              (aeval st a2 + aeval st a1).
+      apply trans_add. eauto with codeseq. omega.
+  - (* Asub *)
+    set (codea1 := compile_aexp_gen ord a1) in *.
+    set (codea2 := compile_aexp_gen ord a2) in *.
+    eapply star_trans. apply IHa1. eauto with codeseq.
+    eapply star_trans. apply IHa2. eauto with codeseq.
+    normalize. apply star_one. apply trans_sub. 
+    eauto with codeseq.
+  - (* AMult *)
+    set (codea1 := compile_aexp_gen ord a1) in *.
+    set (codea2 := compile_aexp_gen ord a2) in *.
+    destruct (ord a1 a2).
+    + (* Eval left first *)
+      eapply star_trans. apply IHa1. eauto with codeseq.
+      eapply star_trans. apply IHa2. eauto with codeseq.
+      normalize. apply star_one. apply trans_mul. 
+      eauto with codeseq.
+    + (* Eval right first *)
+      eapply star_trans. apply IHa2. eauto with codeseq.
+      eapply star_trans. apply IHa1. eauto with codeseq.
+      normalize. apply star_one. 
+      replace (aeval st a1 * aeval st a2) with
+              (aeval st a2 * aeval st a1).
+      apply trans_mul. eauto with codeseq.  
+      rewrite mult_comm. auto.
+Qed.
 
 (** Now, let us try to compute the minimum number of stack entries
   needed to evaluate an expression, regardless of the strategy used. *)
@@ -1744,8 +1825,30 @@ Fixpoint stack_usage (ord: aexp -> aexp -> eval_order) (a: aexp) : nat :=
 Lemma stack_needs_is_optimal:
   forall ord a, stack_needs a <= stack_usage ord a.
 Proof.
-  (* FILL IN HERE *)
-Admitted.
+  induction a; simpl; intros.
+  - (* ANum *)
+    omega.
+  - (* AId *)
+    omega.
+  - (* APlus *)
+    destruct (ord a1 a2).
+    + (* LtoR *)
+      rewrite Nat.min_le_iff. left.
+      apply Nat.max_le_compat. auto. omega.
+    + (* RtoL *)
+      rewrite Nat.min_le_iff. right.
+      apply Nat.max_le_compat. auto. omega.
+  - (* AMinus *)
+    apply Nat.max_le_compat. auto. omega.
+  - (* AMult *)
+    destruct (ord a1 a2).
+    + (* LtoR *)
+      rewrite Nat.min_le_iff. left.
+      apply Nat.max_le_compat. auto. omega.
+    + (* RtoL *)
+      rewrite Nat.min_le_iff. right.
+      apply Nat.max_le_compat. auto. omega.
+Qed.      
 
 (** Useful tip: the tactic [zify; omega] works very well to prove
     arithmetic properties involving min and max operators. *)
@@ -1774,11 +1877,49 @@ Definition compile_aexp_optimal (a: aexp) : code :=
 (** We can show the optimality of the strategy by observing that 
   its stack usage is the minimum predicted by [stack_needs]. *)
 
+Lemma optimal_ord_inv1 : forall a1 a2,
+  LtoR = optimal_ord a1 a2 -> (stack_needs a2) <= (stack_needs a1).
+Proof.
+  intros. unfold optimal_ord in H.
+  remember (stack_needs a2 <=? stack_needs a1) as EQ.
+  destruct EQ; try congruence.
+  apply leb_complete. auto.
+Qed.
+
+Lemma optimal_ord_inv2 : forall a1 a2,
+  RtoL = optimal_ord a1 a2 -> (stack_needs a2) > (stack_needs a1).
+Proof.
+  intros. unfold optimal_ord in H.
+  remember (stack_needs a2 <=? stack_needs a1) as EQ.
+  destruct EQ; try congruence.
+  apply leb_complete_conv. auto.
+Qed.
+
 Lemma stack_usage_optimal_ord:
   forall a, stack_usage optimal_ord a = stack_needs a.
 Proof.
-  (* FILL IN HERE *)
-Admitted.  
+  induction a; simpl; intros; try omega.
+  - (* APlus *)
+    rewrite IHa1, IHa2.
+    remember (optimal_ord a1 a2) as ord. destruct ord.
+    + (* LtoR *) 
+      apply optimal_ord_inv1 in Heqord. 
+      zify; omega.
+    + (* RtoL *) 
+      apply optimal_ord_inv2 in Heqord. 
+      zify; omega.
+  - (* AMinus *)
+    rewrite IHa1, IHa2. auto.
+  - (* AMult *)
+    rewrite IHa1, IHa2.
+    remember (optimal_ord a1 a2) as ord. destruct ord.
+    + (* LtoR *) 
+      apply optimal_ord_inv1 in Heqord. 
+      zify; omega.
+    + (* RtoL *) 
+      apply optimal_ord_inv2 in Heqord. 
+      zify; omega.
+Qed.
 
 (** So far, we've reasoned informally on the stack usage of a particular
   evaluation strategy.  Now, let us formally connect this reasoning with the
@@ -1805,7 +1946,75 @@ Lemma compile_aexp_gen_safe:
        (pc + length (compile_aexp_gen ord a), aeval st a :: stk, st).
 Proof.
   induction a; simpl; intros.
-Admitted.
+  - (* ANum *)
+    eapply star_trans. apply star_one.
+    constructor. apply trans_const. eauto with codeseq.
+    simpl. omega. apply star_refl.
+  - (* AId *)
+    eapply star_trans. apply star_one.
+    constructor. apply trans_var. eauto with codeseq.
+    simpl. omega. apply star_refl.
+  - (* APlus *)
+    set (codea1 := compile_aexp_gen ord a1) in *.
+    set (codea2 := compile_aexp_gen ord a2) in *.
+    set (stkusga1 := stack_usage ord a1) in *.
+    set (stkusga2 := stack_usage ord a2) in *.
+    destruct (ord a1 a2); normalize.
+    + (* LtoR *)
+      eapply star_trans. apply IHa1. 
+      eauto with codeseq. zify; omega. 
+      eapply star_trans. apply IHa2.
+      eauto with codeseq. simpl. zify; omega. 
+      apply star_one. constructor.
+      apply trans_add. eauto with codeseq. 
+      simpl. zify; omega.
+    + (* RtoL *)
+      eapply star_trans. apply IHa2.
+      eauto with codeseq. zify; omega. 
+      eapply star_trans. apply IHa1.
+      eauto with codeseq. simpl. zify; omega. 
+      apply star_one. constructor.
+      replace (aeval st a1 + aeval st a2) with
+              (aeval st a2 + aeval st a1).
+      apply trans_add. eauto with codeseq. omega.
+      simpl. zify; omega.
+  - (* AMinus *)
+    set (codea1 := compile_aexp_gen ord a1) in *.
+    set (codea2 := compile_aexp_gen ord a2) in *.
+    set (stkusga1 := stack_usage ord a1) in *.
+    set (stkusga2 := stack_usage ord a2) in *.
+    eapply star_trans. apply IHa1. 
+    eauto with codeseq. zify; omega. 
+    eapply star_trans. apply IHa2.
+    eauto with codeseq. simpl. zify; omega. 
+    apply star_one. constructor.
+    normalize. apply trans_sub. eauto with codeseq. 
+    simpl. zify; omega.
+  - (* AMult *)
+    set (codea1 := compile_aexp_gen ord a1) in *.
+    set (codea2 := compile_aexp_gen ord a2) in *.
+    set (stkusga1 := stack_usage ord a1) in *.
+    set (stkusga2 := stack_usage ord a2) in *.
+    destruct (ord a1 a2); normalize.
+    + (* LtoR *)
+      eapply star_trans. apply IHa1. 
+      eauto with codeseq. zify; omega. 
+      eapply star_trans. apply IHa2.
+      eauto with codeseq. simpl. zify; omega. 
+      apply star_one. constructor.
+      apply trans_mul. eauto with codeseq. 
+      simpl. zify; omega.
+    + (* RtoL *)
+      eapply star_trans. apply IHa2.
+      eauto with codeseq. zify; omega. 
+      eapply star_trans. apply IHa1.
+      eauto with codeseq. simpl. zify; omega. 
+      apply star_one. constructor.
+      replace (aeval st a1 * aeval st a2) with
+              (aeval st a2 * aeval st a1).
+      apply trans_mul. eauto with codeseq. apply mult_comm.
+      simpl. zify; omega.
+Qed.
 
 (** Moreover, the size [stack_usage ord a] is tight, in that there exists
   a point in the execution of the compiled code for [a] where the stack
@@ -1819,8 +2028,114 @@ Lemma stack_usage_reached:
   /\ length stk' >= length stk + stack_usage ord a.
 Proof.
   induction a; simpl; intros.
-  (* FILL IN HERE *)
-Admitted.
+  - (* ANum *)
+    econstructor; econstructor; split.
+    eapply star_trans. apply star_one.
+    apply trans_const. eauto with codeseq.
+    apply star_refl. simpl. omega.
+  - (* AId *)
+    econstructor; econstructor; split.
+    eapply star_trans. apply star_one.
+    apply trans_var. eauto with codeseq.
+    apply star_refl. simpl. omega.
+  - (* APlus *)
+    set (codea1 := compile_aexp_gen ord a1) in *.
+    set (codea2 := compile_aexp_gen ord a2) in *.
+    set (stkusga1 := stack_usage ord a1) in *.
+    set (stkusga2 := stack_usage ord a2) in *.
+    destruct (ord a1 a2); normalize.
+    + (* LtoR *)
+      destruct (ge_dec stkusga1 (stkusga2 + 1)).
+      * (* stkusga1 >= stkusga2 + 1 *)
+        destruct (IHa1 pc stk) as (pc' & stk'& TRANS1 & LGE1).
+        eauto with codeseq.
+        econstructor; econstructor; split.
+        apply TRANS1. zify; omega.
+      * (* stkusga1 < stkusga2 + 1 *)
+        destruct (IHa2 (pc + length codea1) (aeval st a1 :: stk))
+          as (pc' & stk'& TRANS2 & LGE2).
+        eauto with codeseq.
+        econstructor; econstructor; split.
+        eapply star_trans. 
+        apply compile_aexp_gen_correct with (a:=a1) (ord:=ord).
+        eauto with codeseq. 
+        apply TRANS2. simpl in LGE2. zify; omega.
+    + (* RtoL *)
+      destruct (ge_dec stkusga2 (stkusga1 + 1)).
+      * (* stkusga2 >= stkusga1 + 1 *)
+        destruct (IHa2 pc stk) as (pc' & stk'& TRANS2 & LGE2).
+        eauto with codeseq.
+        econstructor; econstructor; split.
+        apply TRANS2. zify; omega.
+      * (* stkusga2 < stkusga1 + 1 *)
+        destruct (IHa1 (pc + length codea2) (aeval st a2 :: stk))
+          as (pc' & stk'& TRANS1 & LGE1).
+        eauto with codeseq.
+        econstructor; econstructor; split.
+        eapply star_trans. 
+        apply compile_aexp_gen_correct with (a:=a2) (ord:=ord).
+        eauto with codeseq. 
+        apply TRANS1. simpl in LGE1. zify; omega.
+  - (* AMinus *)
+    set (codea1 := compile_aexp_gen ord a1) in *.
+    set (codea2 := compile_aexp_gen ord a2) in *.
+    set (stkusga1 := stack_usage ord a1) in *.
+    set (stkusga2 := stack_usage ord a2) in *.
+    destruct (ge_dec stkusga1 (stkusga2 + 1)).
+    + (* stkusga1 >= stkusga2 + 1 *)
+      destruct (IHa1 pc stk) as (pc' & stk'& TRANS1 & LGE1).
+      eauto with codeseq.
+      econstructor; econstructor; split.
+      apply TRANS1. zify; omega.
+    + (* stkusga1 < stkusga2 + 1 *)
+      destruct (IHa2 (pc + length codea1) (aeval st a1 :: stk))
+        as (pc' & stk'& TRANS2 & LGE2).
+      eauto with codeseq.
+      econstructor; econstructor; split.
+      eapply star_trans. 
+      apply compile_aexp_gen_correct with (a:=a1) (ord:=ord).
+      eauto with codeseq. 
+      apply TRANS2. simpl in LGE2. zify; omega.
+  - (* APlus *)
+    set (codea1 := compile_aexp_gen ord a1) in *.
+    set (codea2 := compile_aexp_gen ord a2) in *.
+    set (stkusga1 := stack_usage ord a1) in *.
+    set (stkusga2 := stack_usage ord a2) in *.
+    destruct (ord a1 a2); normalize.
+    + (* LtoR *)
+      destruct (ge_dec stkusga1 (stkusga2 + 1)).
+      * (* stkusga1 >= stkusga2 + 1 *)
+        destruct (IHa1 pc stk) as (pc' & stk'& TRANS1 & LGE1).
+        eauto with codeseq.
+        econstructor; econstructor; split.
+        apply TRANS1. zify; omega.
+      * (* stkusga1 < stkusga2 + 1 *)
+        destruct (IHa2 (pc + length codea1) (aeval st a1 :: stk))
+          as (pc' & stk'& TRANS2 & LGE2).
+        eauto with codeseq.
+        econstructor; econstructor; split.
+        eapply star_trans. 
+        apply compile_aexp_gen_correct with (a:=a1) (ord:=ord).
+        eauto with codeseq. 
+        apply TRANS2. simpl in LGE2. zify; omega.
+    + (* RtoL *)
+      destruct (ge_dec stkusga2 (stkusga1 + 1)).
+      * (* stkusga2 >= stkusga1 + 1 *)
+        destruct (IHa2 pc stk) as (pc' & stk'& TRANS2 & LGE2).
+        eauto with codeseq.
+        econstructor; econstructor; split.
+        apply TRANS2. zify; omega.
+      * (* stkusga2 < stkusga1 + 1 *)
+        destruct (IHa1 (pc + length codea2) (aeval st a2 :: stk))
+          as (pc' & stk'& TRANS1 & LGE1).
+        eauto with codeseq.
+        econstructor; econstructor; split.
+        eapply star_trans. 
+        apply compile_aexp_gen_correct with (a:=a2) (ord:=ord).
+        eauto with codeseq. 
+        apply TRANS1. simpl in LGE1. zify; omega.
+Qed.
+  
 
 (** **** Full project (5 stars) *)
 
