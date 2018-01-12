@@ -2208,8 +2208,10 @@ Fixpoint set_nth_slot_aux (s: stack) (n: nat) (v: nat) : option stack :=
   end.
 
 Fixpoint set_nth_slot (s:stack) (n:nat) (v:nat) : option stack :=
-  set_nth_slot_aux (List.rev s) n v.
-
+  match (set_nth_slot_aux (List.rev s) n v) with
+  | None => None
+  | Some l => Some (rev l)
+  end.
 
 (** Then, the semantics of the machine is given by the following transition
   relation.  Note that machine states are just pairs of a program counter
@@ -2271,17 +2273,226 @@ Definition mach_terminates (C: code) (stk_init stk_fin: stack) :=
     to machine code and prove its correctness w.r.t. terminating executions,
     as stated below. *)
 
-Definition compile_program (c: com) : code := nil. (* FILL HERE *)
+Fixpoint compute_assigned_vars (c:com) : list id :=
+  match c with
+  | CSkip => nil
+  | CAss x e => (x::nil)
+  | CSeq c1 c2 => 
+    compute_assigned_vars c1 ++ compute_assigned_vars c2
+  | CIf b c1 c2 =>
+    compute_assigned_vars c1 ++ compute_assigned_vars c2
+  | CWhile b c =>
+    compute_assigned_vars c
+  end.
 
-Theorem compile_program_correct_terminating:
-  forall c st,
-  c / empty_state \\ st ->
-  exists stk,
-     mach_terminates (compile_program c) nil stk
-  /\ True.
+(** Initialize the stack with slots for assigned variables *)
+Fixpoint init_stack (vars: list id) : stack :=
+  match vars with
+  | nil => nil
+  | _::vars' => O :: init_stack vars'
+  end.
+
+(** A variable map is a mapping from 
+    variables to their slots in the stack *)
+Definition VAR_MAP := id -> option nat.
+Fixpoint init_var_map (vars: list id) : VAR_MAP :=
+  match vars with
+  | nil => fun x => None
+  | y::vars' => 
+    let map := init_var_map vars' in
+    fun x => if beq_id x y then Some (length vars') else (map x)
+  end.
+
+Section WITH_VAR_MAP.
+
+Variable vmap : VAR_MAP.
+
+(** Compile expressions *)
+Fixpoint compile_aexp (a: aexp) : code :=
+  match a with
+  | ANum n => Iconst n :: nil
+  | AId v => 
+    match (vmap v) with
+    | None => Iconst O :: nil
+    | Some n => Iget n :: nil
+    end
+  | APlus a1 a2 => compile_aexp a1 ++ compile_aexp a2 ++ Iadd :: nil
+  | AMinus a1 a2 => compile_aexp a1 ++ compile_aexp a2 ++ Isub :: nil
+  | AMult a1 a2 => compile_aexp a1 ++ compile_aexp a2 ++ Imul :: nil
+  end.
+
+(** Compile boolean expressions *)
+Fixpoint compile_bexp (b: bexp) (cond: bool) (ofs: nat) : code :=
+  match b with
+  | BTrue =>
+      if cond then Ibranch_forward ofs :: nil else nil
+  | BFalse =>
+      if cond then nil else Ibranch_forward ofs :: nil
+  | BEq a1 a2 =>
+      compile_aexp a1 ++ compile_aexp a2 ++
+      (if cond then Ibeq ofs :: nil else Ibne ofs :: nil)
+  | BLe a1 a2 =>
+      compile_aexp a1 ++ compile_aexp a2 ++
+      (if cond then Ible ofs :: nil else Ibgt ofs :: nil)
+  | BNot b1 =>
+      compile_bexp b1 (negb cond) ofs
+  | BAnd b1 b2 =>
+      let c2 := compile_bexp b2 cond ofs in
+      let c1 := compile_bexp b1 false (if cond then length c2 else ofs + length c2) in
+      c1 ++ c2
+  end.
+
+(** Compile commands *)
+Fixpoint compile_com (c: com) : code :=
+  match c with
+  | SKIP =>
+      nil
+  | (id ::= a) =>
+    match (vmap id) with
+    | None => nil  (* impossible case *)
+    | Some n => compile_aexp a ++ Iset n :: nil
+    end
+  | (c1 ;; c2) =>
+      compile_com c1 ++ compile_com c2
+  | IFB b THEN ifso ELSE ifnot FI =>
+      let code_ifso := compile_com ifso in
+      let code_ifnot := compile_com ifnot in
+      compile_bexp b false (length code_ifso + 1)
+      ++ code_ifso
+      ++ Ibranch_forward (length code_ifnot)
+      :: code_ifnot
+  | WHILE b DO body END =>
+      let code_body := compile_com body in
+      let code_test := compile_bexp b false (length code_body + 1) in
+      code_test
+      ++ code_body
+      ++ Ibranch_backward (length code_test + length code_body + 1)
+      :: nil
+  end.
+
+End WITH_VAR_MAP.
+
+(** Compile the full program *)
+Definition compile_program (p: com) : code :=
+  let vars := compute_assigned_vars p in
+  let vmap := init_var_map vars in
+  compile_com vmap p ++ Ihalt :: nil.
+
+
+(** Examples of compilation: *)
+
+Compute (compile_program (vx ::= APlus (AId vx) (ANum 1))).
+
+(** Result is: [ [Iget 0, Iconst 1, Iadd, Iset 0, Ihalt] ] *)
+
+Compute (compile_program (WHILE BTrue DO SKIP END)).
+
+(** Result is: [ [Ibranch_backward 1, Ihalt] ].  That's a tight loop indeed! *)
+
+Compute (compile_program (IFB BEq (AId vx) (ANum 1) THEN vx ::= ANum 0 ELSE SKIP FI)).
+
+(** Result is: [ [Iget 0, Iconst 1, Ibne 3, Iconst 0, Iset 0, Ibranch_forward 0, Ihalt] ] *)
+
+
+(** Correctness proof of the compilation *)
+
+(** Agreement between the source states and 
+    the stacks in the storeless machine *)
+Definition agree (p:com) (st:state) (stk:stack) : Prop :=
+  let vmap := init_var_map (compute_assigned_vars p) in
+  (* For any assigned variable, its value in the state must
+     be the same as that in the corresponding stack slot *)
+  (forall x n, vmap x = Some n -> get_nth_slot stk n = Some (st x)) /\
+  (forall x, vmap x = None -> st x = O).
+
+
+(** Code sequence definition and its properties copied from above *)
+Inductive codeseq_at: code -> nat -> code -> Prop :=
+  | codeseq_at_intro: forall C1 C2 C3 pc,
+      pc = length C1 ->
+      codeseq_at (C1 ++ C2 ++ C3) pc C2.
+
+(** We show a number of no-brainer lemmas about [code_at] and [codeseq_at],
+  then populate a "hint database" so that Coq can use them automatically. *)
+
+Lemma code_at_app:
+  forall i c2 c1 pc,
+  pc = length c1 ->
+  code_at (c1 ++ i :: c2) pc = Some i.
 Proof.
-  (* Have fun! *)
+  induction c1; simpl; intros; subst pc; auto.
+Qed.
+
+Lemma codeseq_at_head:
+  forall C pc i C',
+  codeseq_at C pc (i :: C') ->
+  code_at C pc = Some i.
+Proof.
+  intros. inversion H. simpl. apply code_at_app. auto.
+Qed.
+
+Lemma codeseq_at_tail:
+  forall C pc i C',
+  codeseq_at C pc (i :: C') ->
+  codeseq_at C (pc + 1) C'.
+Proof.
+  intros. inversion H. 
+  change (C1 ++ (i :: C') ++ C3)
+    with (C1 ++ (i :: nil) ++ C' ++ C3).
+  rewrite <- app_ass. constructor. rewrite app_length. auto.
+Qed. 
+
+Lemma codeseq_at_app_left:
+  forall C pc C1 C2,
+  codeseq_at C pc (C1 ++ C2) ->
+  codeseq_at C pc C1.
+Proof.
+  intros. inversion H. rewrite app_ass. constructor. auto.
+Qed.
+
+Lemma codeseq_at_app_right:
+  forall C pc C1 C2,
+  codeseq_at C pc (C1 ++ C2) ->
+  codeseq_at C (pc + length C1) C2.
+Proof.
+  intros. inversion H. rewrite app_ass. rewrite <- app_ass. constructor. rewrite app_length. auto.
+Qed.
+
+Lemma codeseq_at_app_right2:
+  forall C pc C1 C2 C3,
+  codeseq_at C pc (C1 ++ C2 ++ C3) ->
+  codeseq_at C (pc + length C1) C2.
+Proof.
+  intros. inversion H. repeat rewrite app_ass. rewrite <- app_ass. constructor. rewrite app_length. auto.
+Qed.
+
+Hint Resolve codeseq_at_head codeseq_at_tail codeseq_at_app_left codeseq_at_app_right codeseq_at_app_right2: codeseq.
+
+
+(** The correctness theorem *)
+Lemma compile_com_correct_terminating:
+  forall st c st',
+  c / st \\ st' ->
+  forall C stk pc vmap,
+  vmap = init_var_map (compute_assigned_vars c) ->
+  stk = init_stack (compute_assigned_vars c) ->
+  codeseq_at C pc (compile_com vmap c) ->
+  agree c st stk ->
+  exists stk',
+     star (transition C) (pc, stk) (pc + length (compile_com vmap c), stk')
+  /\ agree c st' stk'.
 Admitted.
+  
+
+(* Theorem compile_program_correct_terminating: *)
+(*   forall c st, *)
+(*   c / empty_state \\ st -> *)
+(*   exists stk, *)
+(*      mach_terminates (compile_program c) nil stk *)
+(*   /\ True. *)
+(* Proof. *)
+(*   (* Have fun! *) *)
+(* Admitted. *)
 
 (** The [True] above is to be replaced by some informative relation between
   the final stack [stk] and the final store [st]. *)
