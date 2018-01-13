@@ -2227,6 +2227,23 @@ Proof.
   apply get_nth_slot_aux_app. auto.
 Qed.
 
+Lemma get_nth_slot_aux_tail: forall l v l',
+  get_nth_slot_aux (l ++ v :: l') (length l) = Some v.
+Proof.
+  induction l; simpl; intros.
+  - reflexivity.
+  - apply IHl.
+Qed.
+
+Lemma get_nth_slot_head : forall v stk,
+  get_nth_slot (v::stk) (length stk) = Some v.
+Proof.
+  intros v stk. unfold get_nth_slot.
+  simpl. rewrite <- rev_length.
+  apply get_nth_slot_aux_tail.
+Qed.
+
+
 Fixpoint set_nth_slot_aux (s: stack) (n: nat) (v: nat) : option stack :=
   match s,n with
   | nil, _ => None
@@ -2238,23 +2255,77 @@ Fixpoint set_nth_slot_aux (s: stack) (n: nat) (v: nat) : option stack :=
     end
   end.
 
-Fixpoint set_nth_slot (s:stack) (n:nat) (v:nat) : option stack :=
+Definition set_nth_slot (s:stack) (n:nat) (v:nat) : option stack :=
   match (set_nth_slot_aux (List.rev s) n v) with
   | None => None
   | Some l => Some (rev l)
   end.
 
+Lemma get_nth_slot_aux_valid : forall stk n v' v,
+  get_nth_slot_aux stk n = Some v' -> 
+  exists stk', set_nth_slot_aux stk n v = Some stk' /\ get_nth_slot_aux stk' n = Some v.
+Proof.
+  induction stk as [|a stk']; simpl; intros.
+  - congruence.
+  - destruct n as [|n'].
+    + inversion H. subst.
+      exists (v::stk'). split; auto.
+    + destruct (IHstk' n' v' v H) 
+        as (stk'' & SET & GET).
+      rewrite SET. exists (a :: stk''). split; auto.
+Qed.
+
 Lemma get_set_slot_valid : forall stk n v' v,
   get_nth_slot stk n = Some v' -> 
   exists stk', set_nth_slot stk n v = Some stk' /\ get_nth_slot stk' n = Some v.
-Admitted.
+Proof.
+  unfold get_nth_slot, set_nth_slot.
+  intros stk n v' v H.
+  destruct (get_nth_slot_aux_valid (rev stk) n v' v H)
+    as (stk' & SET & GET).
+  exists (rev stk'). split.
+  - rewrite SET. auto.
+  - rewrite rev_involutive. auto.
+Qed.
+
+
+Lemma set_slot_get_aux_unchanged : forall stk n v stk' n' v',
+  set_nth_slot_aux stk n' v' = Some stk' ->
+  n <> n' -> 
+  get_nth_slot_aux stk n = Some v ->
+  get_nth_slot_aux stk' n = Some v. 
+Proof.
+  induction stk as [|a stk']; simpl; intros.
+  - congruence.
+  - destruct n as [|n1]; destruct n' as [|n1'].
+    + congruence.
+    + remember (set_nth_slot_aux stk' n1' v') as st eqn:Hst.
+      destruct st; try congruence.
+      inversion H; subst. inversion H1; subst. auto.
+    + inversion H; subst. auto.
+    + remember (set_nth_slot_aux stk' n1' v') as st eqn:Hst.
+      destruct st; try congruence.
+      inversion H. subst. simpl.
+      eapply IHstk'. symmetry. apply Hst.
+      omega. auto.
+Qed.
 
 Lemma set_slot_get_unchanged : forall stk n v stk' n' v',
   set_nth_slot stk n' v' = Some stk' ->
   n <> n' -> 
   get_nth_slot stk n = Some v ->
   get_nth_slot stk' n = Some v. 
-Admitted.
+Proof.
+  unfold get_nth_slot, set_nth_slot.
+  intros. 
+  remember (set_nth_slot_aux (rev stk) n' v') as st eqn:Hst.
+  destruct st; try congruence.
+  inversion H; subst.
+  rewrite rev_involutive. 
+  eapply set_slot_get_aux_unchanged. 
+  symmetry. apply Hst. auto. auto.
+Qed.
+
 
 
 (** Then, the semantics of the machine is given by the following transition
@@ -2356,7 +2427,7 @@ Fixpoint init_var_map (vars: list id) : VAR_MAP :=
              else (map x))
   end.
 
-Lemma init_vmap_prop : forall ids vmap,
+Lemma init_vmap_inj_bounded : forall ids vmap,
   vmap = init_var_map ids ->
   vmap_inj vmap /\ vmap_bounded vmap (length ids).
 Proof.
@@ -2605,6 +2676,36 @@ Proof.
   apply agree_app. auto. auto.
 Qed.
 
+Lemma init_stack_len : forall vars, 
+    length (init_stack vars) = length vars.
+Proof.
+  induction vars as [|x vars'].
+  - auto.
+  - simpl. rewrite IHvars'. auto.
+Qed.
+
+Lemma agree_empty : forall vars,
+  agree (init_var_map vars) empty_state (init_stack vars).
+Proof.
+  unfold agree. intros vars. split.
+  - induction vars as [|x vars']; simpl; intros.
+    + intros. congruence.
+    + destruct (id_dec x0 x).
+      * subst. rewrite <- beq_id_refl in H. 
+        inversion H; subst.
+        replace (length vars') with 
+                (length (init_stack vars')) by 
+            apply init_stack_len.
+        apply get_nth_slot_head.
+      * rewrite <- beq_id_false_iff in H0.
+        rewrite H0 in H.
+        replace (0 :: init_stack vars') with
+            ((0::nil) ++ init_stack vars') by auto.
+        apply get_nth_slot_app. 
+        apply IHvars'. auto.
+  - intros. auto.
+Qed.
+
 
 (** The domain of a variable mapping subsumes all the occurrences
     of variables in a program *)
@@ -2620,6 +2721,59 @@ Fixpoint vmap_covers_com (vmap: VAR_MAP) (c: com) : Prop :=
     vmap_covers_com vmap c
   end.
 
+Lemma init_var_map_exists : forall vars x,
+    In x vars -> exists n, (init_var_map vars x) = Some n.
+Proof.
+  induction vars as [|y vars'].
+  - intros. inversion H.
+  - intros. inversion H.
+    + subst. simpl. rewrite <- beq_id_refl. eauto.
+    + destruct (IHvars' _ H0) as (n & INIT).
+      simpl. destruct (beq_id x y); eauto.
+Qed.
+
+Lemma compute_assigned_covers' : forall c vars vmap,
+  incl (compute_assigned_vars c) vars -> 
+  vmap = init_var_map vars ->
+  vmap_covers_com vmap c.
+Proof.
+  induction c; simpl; intros.
+  - auto.
+  - subst. simpl. unfold incl in H.
+    assert (In i vars). apply H. simpl. auto.
+    destruct (init_var_map_exists _ _ H0)
+      as (n & INIT).
+    eauto.
+  - split.
+    + apply IHc1 with vars; auto. 
+      apply incl_tran with 
+          (compute_assigned_vars c1 ++ compute_assigned_vars c2). 
+      apply incl_appl. apply incl_refl. auto.
+    + apply IHc2 with vars; auto. 
+      apply incl_tran with 
+          (compute_assigned_vars c1 ++ compute_assigned_vars c2). 
+      apply incl_appr. apply incl_refl. auto.
+  - split.
+    + apply IHc1 with vars; auto. 
+      apply incl_tran with 
+          (compute_assigned_vars c1 ++ compute_assigned_vars c2). 
+      apply incl_appl. apply incl_refl. auto.
+    + apply IHc2 with vars; auto. 
+      apply incl_tran with 
+          (compute_assigned_vars c1 ++ compute_assigned_vars c2). 
+      apply incl_appr. apply incl_refl. auto.
+  - apply IHc with vars; auto.
+Qed.
+
+Lemma compute_assigned_covers : forall c vars vmap,
+  vars = compute_assigned_vars c -> 
+  vmap = init_var_map vars ->
+  vmap_covers_com vmap c.
+Proof.
+  intros. apply compute_assigned_covers' with vars.
+  subst vars. apply incl_refl. auto.
+Qed.
+      
 
 (** Code sequence definition and its properties copied from above *)
 Inductive codeseq_at: code -> nat -> code -> Prop :=
@@ -2844,6 +2998,7 @@ Lemma compile_com_correct_terminating:
   forall st c st',
   c / st \\ st' ->
   forall C stk pc vmap,
+  vmap_inj vmap ->
   vmap_covers_com vmap c ->
   codeseq_at C pc (compile_com vmap c) ->
   agree vmap st stk ->
@@ -2851,87 +3006,188 @@ Lemma compile_com_correct_terminating:
      star (transition C) (pc, stk) (pc + length (compile_com vmap c), stk')
   /\ agree vmap st' stk'.
 Proof.
-  induction 1; intros C stk pc vmap COVERS AT AGREE.
+  induction 1; intros C stk pc vmap INJ COVERS AT AGREE.
 
 - (* SKIP *)
   simpl in *. rewrite plus_0_r. 
   eexists. split. apply star_refl. auto.
 
 - (* := *)
+  subst n.
   simpl in *. destruct COVERS as (N & COVERS). 
   rewrite COVERS in *.
-  destruct (agree_update _ _ _ _ _ (aeval st a1) AGREE COVERS) as
-  (stk' & SET & AGREE'). 
-  econstructor. split.
-  + eapply star_trans. 
-    apply compile_aexp_correct. eauto with codeseq.
-    apply AGREE. 
-    apply star_one. normalize. 
-    apply trans_set with N. eauto with codeseq.
-    apply SET.
-  + subst n. auto.
+  destruct (agree_update _ _ _ _ _ (aeval st a1) INJ AGREE COVERS) as
+  (stk' & SET & AGREE').
+  exists stk'. split; auto.
+  eapply star_trans. 
+  apply compile_aexp_correct. eauto with codeseq.
+  apply AGREE. normalize.
+  apply star_one. apply trans_set with N.
+  eauto with codeseq. auto.
 
 - (* sequence *)
   simpl in *.
-  eapply star_trans. apply IHceval1. eauto with codeseq. 
-  normalize. apply IHceval2. eauto with codeseq. 
+  set (code1 := compile_com vmap c1) in *.
+  set (code2 := compile_com vmap c2) in *.
+  destruct COVERS as (COVERS1 & COVERS2).
+  assert (exists stk1 : stack,
+             star (transition C) (pc, stk)
+                  (pc + length code1, stk1) /\
+             agree vmap st' stk1).
+  apply IHceval1; auto. eauto with codeseq.
+  destruct H1 as (stk1 & STAR1 & AGREE1).
+  normalize.
+  assert (exists stk2 : stack,
+             star (transition C) (pc + length code1, stk1)
+                  (pc + length code1 + length code2, stk2) /\
+             agree vmap st'' stk2).
+  apply IHceval2; auto. eauto with codeseq.
+  destruct H1 as (stk2 & STAR2 & AGREE2).
+  exists stk2. split; auto.
+  eapply star_trans; eauto.
 
 - (* if true *)
-  simpl in *.
-  set (code1 := compile_com c1) in *.
-  set (codeb := compile_bexp b false (length code1 + 1)) in *.
-  set (code2 := compile_com c2) in *.
-  eapply star_trans. 
-  apply compile_bexp_correct with (b := b) (cond := false) (ofs := length code1 + 1).
-  eauto with codeseq. 
-  rewrite H. simpl. rewrite plus_0_r. fold codeb. normalize.
-  eapply star_trans. apply IHceval. eauto with codeseq. 
-  apply star_one. eapply trans_branch_forward. eauto with codeseq. omega.
+  simpl in *. destruct COVERS as (COVERS1 & COVERS2).
+  set (code1 := compile_com vmap c1) in *.
+  set (codeb := compile_bexp vmap b false (length code1 + 1)) in *.
+  set (code2 := compile_com vmap c2) in *.
+  assert (star (transition C) (pc, stk)
+               (pc + length codeb +
+                (if eqb (beval st b) false then (length code1+1) else 0), stk)) as STARB.
+  apply compile_bexp_correct; auto. eauto with codeseq.
+  rewrite H in *. simpl in *. normalize.
+  assert(exists stk' : stack,
+            star (transition C) 
+                 (pc + length codeb, stk)
+                 (pc + length codeb + length (compile_com vmap c1), stk') /\
+            agree vmap st' stk').
+  apply IHceval; auto. eauto with codeseq.
+  destruct H1 as (stk1 & STAR1 & AGREE1).
+  exists stk1. split; auto.
+  eapply star_trans. apply STARB.
+  eapply star_trans. apply STAR1.
+  replace (S (length code2)) with (length code2 + 1) by omega.
+  normalize. apply star_one. 
+  eapply trans_branch_forward. eauto with codeseq.
+  subst code1. omega.
 
 - (* if false *)
-  simpl in *.
-  set (code1 := compile_com c1) in *.
-  set (codeb := compile_bexp b false (length code1 + 1)) in *.
-  set (code2 := compile_com c2) in *.
-  eapply star_trans. 
-  apply compile_bexp_correct with (b := b) (cond := false) (ofs := length code1 + 1).
-  eauto with codeseq. 
-  rewrite H. simpl. fold codeb. normalize.
-  replace (pc + length codeb + length code1 + S(length code2))
-     with (pc + length codeb + length code1 + 1 + length code2).
-  apply IHceval. eauto with codeseq. omega. 
+  simpl in *. destruct COVERS as (COVERS1 & COVERS2).
+  set (code1 := compile_com vmap c1) in *.
+  set (codeb := compile_bexp vmap b false (length code1 + 1)) in *.
+  set (code2 := compile_com vmap c2) in *.
+  assert (star (transition C) (pc, stk)
+               (pc + length codeb +
+                (if eqb (beval st b) false then (length code1+1) else 0), stk)) as STARB.
+  apply compile_bexp_correct; auto. eauto with codeseq.
+  rewrite H in *. simpl in *. normalize.
+  assert (exists stk' : stack,
+             star (transition C) 
+                  (pc + length codeb + length code1 + 1, stk)
+                  (pc + length codeb + length code1 + 1 + length code2, stk') /\
+             agree vmap st' stk').
+  apply IHceval; auto. eauto with codeseq.
+  destruct H1 as (stk2 & STAR2 & AGREE2).
+  exists stk2. split; auto.
+  replace (S (length code2)) with (1 + length code2) by omega.
+  normalize. 
+  eapply star_trans. apply STARB.
+  eapply star_trans. apply STAR2. apply star_refl.
 
 - (* while false *)
-  simpl in *. 
+  simpl in *.
+  set (codec := compile_com vmap c) in *.
+  set (codeb := compile_bexp vmap b false (length codec + 1)) in *.
+  exists stk. split; auto.
   eapply star_trans.
-  apply compile_bexp_correct with (b := b) (cond := false) (ofs := length (compile_com c) + 1). 
+  apply compile_bexp_correct with (b := b) (cond := false) (ofs := length (compile_com vmap c) + 1) (st := st) (vmap := vmap); auto.
   eauto with codeseq.
   rewrite H. simpl. normalize. apply star_refl.
 
 - (* while true *)
-  apply star_trans with (pc, stk, st').
   simpl in *.
-  eapply star_trans.
-  apply compile_bexp_correct with (b := b) (cond := false) (ofs := length (compile_com c) + 1). 
-  eauto with codeseq. 
-  rewrite H; simpl. rewrite plus_0_r.
-  eapply star_trans. apply IHceval1. eauto with codeseq. 
-  apply star_one.
-  eapply trans_branch_backward. eauto with codeseq. omega.
-  apply IHceval2. auto.
+  set (codec := compile_com vmap c) in *.
+  set (codeb := compile_bexp vmap b false (length codec + 1)) in *.
+  assert (star (transition C) (pc, stk)
+               (pc + length codeb +
+                (if eqb (beval st b) false then (length codec + 1) else 0), stk)) as STARB.
+  apply compile_bexp_correct; auto. eauto with codeseq.
+  rewrite H in *. simpl in *. normalize.
+  assert (exists stk' : stack,
+             star (transition C) (pc + length codeb, stk)
+                  (pc + length codeb + length codec, stk') /\
+             agree vmap st' stk').
+  apply IHceval1; auto. eauto with codeseq.
+  destruct H2 as (stk' & STARC & AGREEC).
+  assert (star (transition C) (pc + length codeb, stk)
+               (pc, stk')) as STARBACK.
+  eapply star_trans. apply STARC.
+  apply star_one. eapply trans_branch_backward.
+  eauto with codeseq. omega.
+  set (codeloop := (codeb ++ codec ++
+                    Ibranch_backward (length codeb + length codec + 1) :: nil)) in *.
+  destruct (IHceval2 C stk' pc vmap INJ COVERS AT AGREEC) as
+      (stk'' & STARLOOP & AGREELOOP).
+  exists stk''. split; auto.
+  eapply star_trans. apply STARB.
+  eapply star_trans. apply STARBACK. 
+  normalize. apply STARLOOP.
 Qed.
 
-  
 
-(* Theorem compile_program_correct_terminating: *)
-(*   forall c st, *)
-(*   c / empty_state \\ st -> *)
-(*   exists stk, *)
-(*      mach_terminates (compile_program c) nil stk *)
-(*   /\ True. *)
-(* Proof. *)
-(*   (* Have fun! *) *)
-(* Admitted. *)
+Theorem compile_com_correct_terminating':
+  forall c st st' vars vmap stk C pc,
+  c / st \\ st' ->
+  vars = compute_assigned_vars c ->
+  vmap = init_var_map vars ->
+  agree vmap st stk ->
+  codeseq_at C pc (compile_com vmap c) ->
+  exists stk',
+     star (transition C)
+          (pc, stk) (pc + length (compile_com vmap c), stk')
+  /\ agree vmap st' stk'.
+Proof.
+  intros.
+  apply compile_com_correct_terminating with st; auto.
+  destruct (init_vmap_inj_bounded vars vmap); auto.
+  apply compute_assigned_covers with vars; auto.
+Qed.
+
+Definition mach_terminates_with_emptystk
+           (C:code) (st':state) (stk_fin:stack) :=
+exists (pc : nat) vmap stk_init,
+  agree vmap empty_state stk_init /\
+  code_at C pc = Some Ihalt /\
+  star (transition C) (0, stk_init) (pc, stk_fin) /\
+  agree vmap st' stk_fin.
+
+Theorem compile_program_correct_terminating:
+  forall c st,
+  c / empty_state \\ st ->
+  exists stk,
+     mach_terminates_with_emptystk (compile_program c) st stk.
+Proof.
+  intros c st H.
+  set (ivars := (compute_assigned_vars c)).
+  set (ivmap := init_var_map ivars).
+  set (istk  := init_stack ivars).
+  assert (exists stk,
+             star (transition (compile_program c))
+                  (0, (init_stack ivars))
+                  (0 + length (compile_com ivmap c), stk)
+             /\ agree ivmap st stk).
+  eapply compile_com_correct_terminating'; eauto.
+  apply agree_empty.
+  unfold compile_program. 
+  apply codeseq_at_intro with (C1:=nil). auto.
+  simpl in H0. destruct H0 as (stk & STAR & AGREE).
+  exists stk. unfold mach_terminates_with_emptystk.
+  exists (length (compile_com ivmap c)); exists ivmap; exists istk. 
+  split.
+  apply agree_empty. split.
+  apply code_at_app. auto. split; auto.
+Qed.
+
 
 (** The [True] above is to be replaced by some informative relation between
   the final stack [stk] and the final store [st]. *)
