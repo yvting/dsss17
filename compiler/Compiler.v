@@ -2141,6 +2141,17 @@ Qed.
 
 Module StorelessMachine.
 
+Lemma id_dec : forall (x y:id), x = y \/ x <> y.
+Proof.
+  intros x y. 
+  assert (beq_id x y = true \/ beq_id x y = false).
+  destruct (beq_id x y); auto.
+  destruct H as [IDEQ | IDNEQ].
+  - left. apply beq_id_true_iff. auto.
+  - right. apply beq_id_false_iff. auto.
+Qed.
+
+
 (** The purpose of this project is to retarget the IMP compiler to a
   different, simpler virtual machine that has no store, just a stack
   that also supports direct accesses, i.e. reading or modifying the
@@ -2193,8 +2204,28 @@ Fixpoint get_nth_slot_aux (s: stack) (n: nat) : option nat :=
   | v::s', S n' => get_nth_slot_aux s' n'
   end.
 
-Fixpoint get_nth_slot (s:stack) (n:nat) : option nat :=
+Definition get_nth_slot (s:stack) (n:nat) : option nat :=
   get_nth_slot_aux (List.rev s) n.
+
+Lemma get_nth_slot_aux_app : forall s1 s2 i v,
+  get_nth_slot_aux s1 i = Some v ->
+  get_nth_slot_aux (s1++s2) i = Some v.
+Proof.
+  induction s1 as [|a s1']; simpl; intros.
+  - inversion H.
+  - destruct i as [|i'].
+    + auto.
+    + apply IHs1'. auto.
+Qed.
+
+Lemma get_nth_slot_app : forall s1 s2 n v,
+  get_nth_slot s2 n = Some v ->
+  get_nth_slot (s1 ++ s2) n = Some v.
+Proof.
+  unfold get_nth_slot. intros.
+  rewrite rev_app_distr. 
+  apply get_nth_slot_aux_app. auto.
+Qed.
 
 Fixpoint set_nth_slot_aux (s: stack) (n: nat) (v: nat) : option stack :=
   match s,n with
@@ -2212,6 +2243,19 @@ Fixpoint set_nth_slot (s:stack) (n:nat) (v:nat) : option stack :=
   | None => None
   | Some l => Some (rev l)
   end.
+
+Lemma get_set_slot_valid : forall stk n v' v,
+  get_nth_slot stk n = Some v' -> 
+  exists stk', set_nth_slot stk n v = Some stk' /\ get_nth_slot stk' n = Some v.
+Admitted.
+
+Lemma set_slot_get_unchanged : forall stk n v stk' n' v',
+  set_nth_slot stk n' v' = Some stk' ->
+  n <> n' -> 
+  get_nth_slot stk n = Some v ->
+  get_nth_slot stk' n = Some v. 
+Admitted.
+
 
 (** Then, the semantics of the machine is given by the following transition
   relation.  Note that machine states are just pairs of a program counter
@@ -2292,16 +2336,138 @@ Fixpoint init_stack (vars: list id) : stack :=
   | _::vars' => O :: init_stack vars'
   end.
 
-(** A variable map is a mapping from 
-    variables to their slots in the stack *)
 Definition VAR_MAP := id -> option nat.
+
+Definition vmap_inj (vmap: VAR_MAP) : Prop :=
+  forall x1 x2 n1 n2,
+    x1 <> x2 ->
+    vmap x1 = Some n1 -> vmap x2 = Some n2 ->
+    n1 <> n2.
+
+Definition vmap_bounded (vmap: VAR_MAP) (N:nat) : Prop :=
+  forall x n, vmap x = Some n -> n < N.
+
 Fixpoint init_var_map (vars: list id) : VAR_MAP :=
   match vars with
-  | nil => fun x => None
-  | y::vars' => 
+  | nil => (fun x => None) 
+  | y::vars' =>
     let map := init_var_map vars' in
-    fun x => if beq_id x y then Some (length vars') else (map x)
+      (fun x => if beq_id x y then Some (length vars')
+             else (map x))
   end.
+
+Lemma init_vmap_prop : forall ids vmap,
+  vmap = init_var_map ids ->
+  vmap_inj vmap /\ vmap_bounded vmap (length ids).
+Proof.
+  induction ids as [|x ids']; simpl; intros.
+  - (* ids = nil *)
+    split.
+    + unfold vmap_inj. intros. subst. congruence.
+    + unfold vmap_bounded. intros. subst. congruence.
+  - (* ids = x :: ids' *)
+    split.
+    + unfold vmap_inj. subst. intros.
+      destruct (id_dec x1 x); destruct (id_dec x2 x); subst.
+      * congruence.
+      * rewrite <- beq_id_refl in *. inversion H0; subst.
+        rewrite <- beq_id_false_iff in *.
+        rewrite H3 in H1.
+        destruct (IHids' (init_var_map ids') eq_refl) as
+            (VMAP_INJ' & VMAP_BOUND').
+        unfold vmap_bounded in VMAP_BOUND'.
+        assert (n2 < length ids'). eapply VMAP_BOUND'; eauto.
+        omega.
+      * rewrite <- beq_id_refl in *. inversion H1; subst.
+        rewrite <- beq_id_false_iff in *.
+        rewrite H2 in H0.
+        destruct (IHids' (init_var_map ids') eq_refl) as
+            (VMAP_INJ' & VMAP_BOUND').
+        unfold vmap_bounded in VMAP_BOUND'.
+        assert (n1 < length ids'). eapply VMAP_BOUND'; eauto.
+        omega.
+      * rewrite <- beq_id_false_iff in *.
+        rewrite H2,H3 in *.
+        destruct (IHids' (init_var_map ids')) as
+            (VMAP_INJ' & VMAP_BOUND'); auto.
+        unfold vmap_inj in VMAP_INJ'.
+        eapply VMAP_INJ'; eauto.
+        rewrite <- beq_id_false_iff. auto.
+    + unfold vmap_bounded. subst. intros.
+      destruct (beq_id x0 x).
+      * inversion H; omega.
+      * destruct (IHids' (init_var_map ids')) as
+            (VMAP_INJ' & VMAP_BOUND'); auto.
+        unfold vmap_bounded in VMAP_BOUND'.
+        assert (n < length ids'). 
+        eapply VMAP_BOUND'; eauto.
+        omega.
+Qed.
+  
+
+(* (** A variable map is a mapping from  *)
+(*     variables to their slots in the stack *) *)
+(* Record VAR_MAP : Type := mkVarMap *)
+(*   { *)
+(*     var_map : id -> option nat; *)
+(*     var_map_inj : forall x1 x2 n1 n2,  *)
+(*         x1 <> x2 ->  *)
+(*         (var_map x1) = Some n1 ->  *)
+(*         (var_map x2) = Some n2 ->  *)
+(*         n1 <> n2; *)
+(*   }. *)
+
+(* Record BOUNDED_VAR_MAP (N:nat) : Type := mkBoundedVarMap *)
+(*   { *)
+(*     bvar_map : id -> option nat; *)
+(*     bvar_map_inj : forall x1 x2 n1 n2,  *)
+(*         x1 <> x2 ->  *)
+(*         (bvar_map x1) = Some n1 ->  *)
+(*         (bvar_map x2) = Some n2 ->  *)
+(*         n1 <> n2; *)
+(*     bvar_map_bounded : *)
+(*       forall x n, bvar_map x = Some n -> n < N; *)
+(*   }. *)
+
+(* Definition bvmap_to_vmap {N:nat} (bvmap: BOUNDED_VAR_MAP N) : VAR_MAP := *)
+(*   mkVarMap (bvar_map _ bvmap) (bvar_map_inj _ bvmap). *)
+
+
+(* Program Fixpoint init_bvar_map (vars: list id) : BOUNDED_VAR_MAP (length vars) := *)
+(*   match vars with *)
+(*   | nil => mkBoundedVarMap O (fun x => None) _ _ *)
+(*   | y::vars' =>  *)
+(*     let map := init_bvar_map vars' in *)
+(*     mkBoundedVarMap (length vars) *)
+(*       (fun x => if beq_id x y then Some (length vars')  *)
+(*              else (bvar_map (length vars') map x)) *)
+(*       _ _ *)
+(*   end. *)
+(* Next Obligation. *)
+(*   simpl in *. destruct (id_dec x1 y); destruct (id_dec x2 y); subst. *)
+(*   - congruence. *)
+(*   - rewrite <- beq_id_false_iff in H3. *)
+(*     rewrite H3 in H1. rewrite <- beq_id_refl in H0. inversion H0. *)
+(*     rewrite H4 in *.  *)
+(*     assert (n2 < n1). apply bvar_map_bounded0 with x2. auto. *)
+(*     omega. *)
+(*   - rewrite <- beq_id_false_iff in H2. rewrite H2 in H0. *)
+(*     rewrite <- beq_id_refl in H1. inversion H1. *)
+(*     rewrite H4 in *. *)
+(*     assert (n1 < n2). apply bvar_map_bounded0 with x1. auto. *)
+(*     omega. *)
+(*   - rewrite <- beq_id_false_iff in H2, H3. *)
+(*     rewrite H2, H3 in *. *)
+(*     eapply bvar_map_inj0; eauto. *)
+(* Qed. *)
+(* Next Obligation. *)
+(*   simpl in *. destruct (beq_id x y). *)
+(*   - inversion H. omega. *)
+(*   - apply bvar_map_bounded0 in H. omega. *)
+(* Qed. *)
+
+(* Definition init_var_map (vars: list id) : VAR_MAP := *)
+(*   bvmap_to_vmap (init_bvar_map vars). *)
 
 Section WITH_VAR_MAP.
 
@@ -2398,12 +2564,61 @@ Compute (compile_program (IFB BEq (AId vx) (ANum 1) THEN vx ::= ANum 0 ELSE SKIP
 
 (** Agreement between the source states and 
     the stacks in the storeless machine *)
-Definition agree (p:com) (st:state) (stk:stack) : Prop :=
-  let vmap := init_var_map (compute_assigned_vars p) in
+Definition agree (vmap:VAR_MAP) (st:state) (stk:stack) : Prop :=
   (* For any assigned variable, its value in the state must
      be the same as that in the corresponding stack slot *)
   (forall x n, vmap x = Some n -> get_nth_slot stk n = Some (st x)) /\
   (forall x, vmap x = None -> st x = O).
+
+Lemma agree_some : forall vmap i n st stk,
+    vmap i = Some n -> agree vmap st stk -> 
+    get_nth_slot stk n = Some (st i).
+Proof.
+  intros vmap i n st stk VMAP AGREE.
+  unfold agree in AGREE. destruct AGREE as (AGSOME & AGNONE).
+  apply AGSOME. auto.
+Qed.
+
+Lemma agree_none : forall vmap i st stk,
+    vmap i = None -> agree vmap st stk -> (st i) = O.
+Proof.
+  intros vmap i st stk VMAP AGREE.
+  unfold agree in AGREE. destruct AGREE as (AGSOME & AGNONE).
+  apply AGNONE. auto.
+Qed.
+
+Lemma agree_app : forall vmap st stk1 stk2,
+  agree vmap st stk2 -> agree vmap st (stk1 ++ stk2).
+Proof.
+  unfold agree. intros vmap st stk1 stk2 AGREE.
+  destruct AGREE as (AGSOME & AGNONE). split.
+  - intros x n H.
+    apply get_nth_slot_app. apply AGSOME; auto.
+  - intros x H. apply AGNONE; auto.
+Qed.
+
+Lemma agree_cons : forall vmap st a stk,
+  agree vmap st stk -> agree vmap st (a :: stk).
+Proof.
+  intros vmap st a stk H.
+  replace (a :: stk) with ((a::nil) ++ stk).
+  apply agree_app. auto. auto.
+Qed.
+
+
+(** The domain of a variable mapping subsumes all the occurrences
+    of variables in a program *)
+Fixpoint vmap_covers_com (vmap: VAR_MAP) (c: com) : Prop :=
+  match c with
+  | CSkip => True
+  | CAss x e => exists n, (vmap x = Some n)
+  | CSeq c1 c2 => 
+    vmap_covers_com vmap c1 /\ vmap_covers_com vmap c2
+  | CIf b c1 c2 =>
+    vmap_covers_com vmap c1 /\ vmap_covers_com vmap c2
+  | CWhile b c =>
+    vmap_covers_com vmap c
+  end.
 
 
 (** Code sequence definition and its properties copied from above *)
@@ -2468,20 +2683,244 @@ Qed.
 
 Hint Resolve codeseq_at_head codeseq_at_tail codeseq_at_app_left codeseq_at_app_right codeseq_at_app_right2: codeseq.
 
+(* Correctness of compilation of expressions *)
+Lemma compile_aexp_correct:
+  forall C st a pc stk vmap,
+  codeseq_at C pc (compile_aexp vmap a) ->
+  agree vmap st stk ->
+  star (transition C)
+       (pc, stk)
+       (pc + length (compile_aexp vmap a), aeval st a :: stk).
+Proof.
+  induction a; simpl; intros.
+
+  - (* Anum *)
+    apply star_one. apply trans_const. eauto with codeseq.
+
+  - (* AId *)
+    remember (vmap i) as V eqn:VMAPEQ.
+    destruct V as [n|].
+    + (* vmap i = Some n *)
+      apply star_one. eapply trans_get. eauto with codeseq.
+      eapply agree_some. symmetry. apply VMAPEQ. auto.
+    + (* vmap i = None *)
+      apply star_one. eapply trans_const.
+      assert (st i = O).
+        eapply agree_none. symmetry. apply VMAPEQ. apply H0.
+      rewrite H1. eauto with codeseq.
+
+  - (* APlus *)
+    eapply star_trans. apply IHa1.
+    eauto with codeseq. auto. 
+    eapply star_trans. apply IHa2.
+    eauto with codeseq. apply agree_cons. auto.
+    apply star_one. normalize. apply trans_add.
+    eauto with codeseq.
+
+  - (* AMinus *)
+    eapply star_trans. apply IHa1.
+    eauto with codeseq. auto. 
+    eapply star_trans. apply IHa2.
+    eauto with codeseq. apply agree_cons. auto. 
+    apply star_one. normalize. apply trans_sub.
+    eauto with codeseq.
+
+  - (* AMult *)
+    eapply star_trans. apply IHa1.
+    eauto with codeseq. auto. 
+    eapply star_trans. apply IHa2.
+    eauto with codeseq. apply agree_cons. auto. 
+    apply star_one. normalize. apply trans_mul.
+    eauto with codeseq.
+Qed.
+
+Lemma compile_bexp_correct:
+  forall C st b cond ofs pc stk vmap,
+  codeseq_at C pc (compile_bexp vmap b cond ofs) ->
+  agree vmap st stk ->
+  star (transition C)
+       (pc, stk)
+       (pc + length (compile_bexp vmap b cond ofs) + if eqb (beval st b) cond then ofs else 0, stk).
+Proof.
+  induction b; simpl; intros.
+
+  - (* BTrue *)
+    destruct cond; simpl.
+    + apply star_one. apply trans_branch_forward with ofs; eauto with codeseq.
+    + normalize. apply star_refl.
+
+  - (* BFalse *)
+    destruct cond; simpl.
+    + normalize. apply star_refl.
+    + apply star_one. apply trans_branch_forward with ofs; eauto with codeseq.
+
+  - (* BEq *)
+    eapply star_trans. apply compile_aexp_correct.
+    eauto with codeseq. apply H0.
+    eapply star_trans. apply compile_aexp_correct.
+    eauto with codeseq. apply agree_cons. apply H0.
+    apply star_one. destruct cond.
+    + (* cond = True *)
+      normalize. apply trans_beq with ofs.
+      eauto with codeseq.
+      destruct (aeval st a =? aeval st a0); auto.
+    + (* cond = False *)
+      normalize. apply trans_bne with ofs.
+      eauto with codeseq.
+      destruct (aeval st a =? aeval st a0); auto.
+      
+  - (* BLe *)
+    eapply star_trans. apply compile_aexp_correct.
+    eauto with codeseq. apply H0.
+    eapply star_trans. apply compile_aexp_correct.
+    eauto with codeseq. apply agree_cons. apply H0.
+    apply star_one. destruct cond.
+    + (* cond = True *)
+      normalize. apply trans_ble with ofs.
+      eauto with codeseq.
+      destruct (aeval st a <=? aeval st a0); auto.
+    + (* cond = False *)
+      normalize. apply trans_bgt with ofs.
+      eauto with codeseq.
+      destruct (aeval st a <=? aeval st a0); auto.
+
+  - (* BNot *)
+    replace (eqb (negb (beval st b)) cond) with
+            (eqb (beval st b) (negb cond)).
+    apply IHb; auto.
+    destruct (beval st b); destruct (cond); auto.
+    
+  - (* BAnd *)
+    set (codeb2 := (compile_bexp vmap b2 cond ofs)) in *.
+    set (ofs1 := (if cond then length codeb2 else ofs + length codeb2)) in *.
+    eapply star_trans.
+    apply IHb1. eauto with codeseq. auto.
+    destruct (beval st b1); normalize.
+    + (* beval st b1 = true *)
+      apply IHb2. eauto with codeseq. auto.
+    + (* beval st b1 = false *)
+      destruct cond; normalize.
+      apply star_refl.
+      replace ofs1 with (length codeb2 + ofs).
+      normalize. apply star_refl. 
+      subst ofs1. omega.
+Qed.
+
+
+Lemma agree_update : forall vmap st stk x n v,    
+  vmap_inj vmap -> agree vmap st stk -> vmap x = Some n ->
+  exists stk', set_nth_slot stk n v = Some stk' /\ agree vmap (t_update st x v) stk'.
+Proof.
+  intros vmap st stk x n v INJ AGREE VMAP.
+  unfold agree in AGREE. destruct AGREE as (AGSOME & AGNONE).
+  destruct (get_set_slot_valid _ _ _ v (AGSOME x n VMAP)) as
+      (stk' & SET & NGET).
+  exists stk'. split.
+  - auto.
+  - unfold agree. split.
+    (* The agreement is preserved for mapped variables *)
+    + intros x0 n0 VMAP0.
+      destruct (id_dec x x0) as [IDEQ | IDNEQ].
+      (* Agreement holds for the variable being assigned *) 
+      * subst.
+        rewrite t_update_eq. rewrite VMAP in VMAP0.
+        inversion VMAP0. subst. auto.
+      (* Agreement holds for the remaining variables *)
+      * unfold vmap_inj in INJ.
+        assert (n <> n0). eapply INJ; eauto.
+        rewrite t_update_neq; auto.
+        eapply set_slot_get_unchanged; eauto.
+    (* The agreement is preserved for unmapped variables *)
+    + intros x0 H.
+      destruct (id_dec x x0) as [IDEQ | IDNEQ].
+      * subst. congruence.
+      * assert (t_update st x v x0 = st x0).
+        apply t_update_neq. auto. rewrite H0. auto.
+Qed.
+
 
 (** The correctness theorem *)
 Lemma compile_com_correct_terminating:
   forall st c st',
   c / st \\ st' ->
   forall C stk pc vmap,
-  vmap = init_var_map (compute_assigned_vars c) ->
-  stk = init_stack (compute_assigned_vars c) ->
+  vmap_covers_com vmap c ->
   codeseq_at C pc (compile_com vmap c) ->
-  agree c st stk ->
+  agree vmap st stk ->
   exists stk',
      star (transition C) (pc, stk) (pc + length (compile_com vmap c), stk')
-  /\ agree c st' stk'.
-Admitted.
+  /\ agree vmap st' stk'.
+Proof.
+  induction 1; intros C stk pc vmap COVERS AT AGREE.
+
+- (* SKIP *)
+  simpl in *. rewrite plus_0_r. 
+  eexists. split. apply star_refl. auto.
+
+- (* := *)
+  simpl in *. destruct COVERS as (N & COVERS). 
+  rewrite COVERS in *.
+  destruct (agree_update _ _ _ _ _ (aeval st a1) AGREE COVERS) as
+  (stk' & SET & AGREE'). 
+  econstructor. split.
+  + eapply star_trans. 
+    apply compile_aexp_correct. eauto with codeseq.
+    apply AGREE. 
+    apply star_one. normalize. 
+    apply trans_set with N. eauto with codeseq.
+    apply SET.
+  + subst n. auto.
+
+- (* sequence *)
+  simpl in *.
+  eapply star_trans. apply IHceval1. eauto with codeseq. 
+  normalize. apply IHceval2. eauto with codeseq. 
+
+- (* if true *)
+  simpl in *.
+  set (code1 := compile_com c1) in *.
+  set (codeb := compile_bexp b false (length code1 + 1)) in *.
+  set (code2 := compile_com c2) in *.
+  eapply star_trans. 
+  apply compile_bexp_correct with (b := b) (cond := false) (ofs := length code1 + 1).
+  eauto with codeseq. 
+  rewrite H. simpl. rewrite plus_0_r. fold codeb. normalize.
+  eapply star_trans. apply IHceval. eauto with codeseq. 
+  apply star_one. eapply trans_branch_forward. eauto with codeseq. omega.
+
+- (* if false *)
+  simpl in *.
+  set (code1 := compile_com c1) in *.
+  set (codeb := compile_bexp b false (length code1 + 1)) in *.
+  set (code2 := compile_com c2) in *.
+  eapply star_trans. 
+  apply compile_bexp_correct with (b := b) (cond := false) (ofs := length code1 + 1).
+  eauto with codeseq. 
+  rewrite H. simpl. fold codeb. normalize.
+  replace (pc + length codeb + length code1 + S(length code2))
+     with (pc + length codeb + length code1 + 1 + length code2).
+  apply IHceval. eauto with codeseq. omega. 
+
+- (* while false *)
+  simpl in *. 
+  eapply star_trans.
+  apply compile_bexp_correct with (b := b) (cond := false) (ofs := length (compile_com c) + 1). 
+  eauto with codeseq.
+  rewrite H. simpl. normalize. apply star_refl.
+
+- (* while true *)
+  apply star_trans with (pc, stk, st').
+  simpl in *.
+  eapply star_trans.
+  apply compile_bexp_correct with (b := b) (cond := false) (ofs := length (compile_com c) + 1). 
+  eauto with codeseq. 
+  rewrite H; simpl. rewrite plus_0_r.
+  eapply star_trans. apply IHceval1. eauto with codeseq. 
+  apply star_one.
+  eapply trans_branch_backward. eauto with codeseq. omega.
+  apply IHceval2. auto.
+Qed.
+
   
 
 (* Theorem compile_program_correct_terminating: *)
