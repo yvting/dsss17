@@ -285,7 +285,7 @@ Lemma agree_update_dead:
   agree L s1 s2 -> ~VS.In x L ->
   agree L (t_update s1 x v) s2.
 Proof.
-  intros; red; intros. unfold t_update. destruct (beq_id x x0) eqn:BEQ. 
+  intros. red. intros. unfold t_update. destruct (beq_id x x0) eqn:BEQ. 
 - apply beq_id_true_iff in BEQ. subst x0. contradiction.
 - apply H; auto.
 Qed.
@@ -373,7 +373,7 @@ Proof.
     eapply agree_mon; eauto.
   destruct (IHceval2 L st2) as [st3 [E2 A2]].
     auto. 
-  exists st3; split.
+  exists st3; split. 
   apply E_WhileTrue with st2; auto. 
   auto.
 Qed.
@@ -392,6 +392,18 @@ Fixpoint measure (c: com) : nat :=
   | _ => 0
   end.
 
+(** 
+<<
+                 agree (live c L) st st1
+     c / st  ----------------------------- dce c L / st1
+       |                                          |
+       |                                          |
+       |                                          |
+       v                                          v
+    c' / st' ----------------------------- dce c' L / st1'
+                 agree (live c' L) st' st1'
+>>
+*)
 Theorem dce_simulation:
   forall c st c' st',
   c / st ==> c' / st' ->
@@ -404,5 +416,56 @@ Theorem dce_simulation:
   (measure c' < measure c /\ dce c L = dce c' L /\ agree (live c' L) st' st1).
 Proof.
    intros until st'. intro STEP. dependent induction STEP; simpl; intros.
-  (* FILL IN HERE *)
-Admitted.
+
+   - (* Assignment *)
+     destruct (VS.mem i L) eqn:LIVE_AFTER.
+     + left. eexists. split. apply CS_Ass; eauto.
+       rewrite <- plus_n_O. 
+       assert (AEQ: aeval st a = aeval st1 a). 
+       { eapply aeval_agree; eauto. fsetdec. }
+       rewrite AEQ.
+       apply agree_update_live. 
+       eapply agree_mon. eauto. fsetdec.
+     + right. split; auto. split; auto.
+       apply agree_update_dead. auto. 
+       rewrite <- VS.mem_spec. congruence.
+
+   - (* Sequence *)
+     destruct (IHSTEP c1 st c1' st' eq_refl eq_refl _ _ H) 
+       as [TSTEP | NOSTEP].
+     + destruct TSTEP as (st1' & TSTEP' & A).
+       left. exists st1'. split.
+       apply CS_SeqStep. auto. auto.
+     + destruct NOSTEP as (MSR & NOSTEP' & A).
+       right. split. auto. split. 
+       rewrite NOSTEP'. auto. auto.
+
+   - (* Skip Sequence *)
+     left. exists st1. split.
+     apply CS_SeqFinish. auto.
+
+   - (* If true *)
+     left. exists st1. split.
+     + assert (beval st1 b = true).
+       { rewrite <- H. symmetry. eapply beval_agree; eauto. fsetdec. }
+       apply CS_IfTrue. auto.
+     + eapply agree_mon; eauto. fsetdec.
+
+   - (* If false *)
+     left. exists st1. split.
+     + assert (beval st1 b = false).
+       { rewrite <- H. symmetry. eapply beval_agree; eauto. fsetdec. }
+       apply CS_IfFalse. auto.
+     + eapply agree_mon; eauto. fsetdec.
+
+   - (* While *)
+     left. exists st1. split. 
+     + apply CS_While.
+     + eapply agree_mon; eauto. 
+       destruct (live_while_charact b c1 L) as (LS1 & LS2 & LS3). 
+       set (WLIVE := live (WHILE b DO c1 END) L) in *.
+       simpl in WLIVE. fold WLIVE.
+       fsetdec.
+
+Qed.
+
