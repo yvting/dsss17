@@ -20,6 +20,7 @@ Variable eq: A -> A -> Prop.
 Variable beq: A -> A -> bool.
 Hypothesis beq_correct: forall x y, if beq x y then eq x y else ~eq x y.
 
+
 Variable le: A -> A -> Prop.
 Hypothesis le_trans: forall x y z, le x y -> le y z -> le x z.
 
@@ -123,6 +124,110 @@ End FIXPOINT.
     Hint: you need to iterate starting from pre-fixpoints [x] (satisfying
     [le (F x) x]), creating a descending chain.  Hence, you need to make
     sure that all strictly descending chains are finite. *)
+
+Module GFIXPOINT.
+Section FIXPOINT.
+
+(** Consider a type [A] equipped with a decidable equality [eq] and a
+    transitive ordering [le]. *)
+
+Variable A: Type.
+
+Variable eq: A -> A -> Prop.
+Hypothesis eq_symm: forall x y, eq x y -> eq y x.
+
+Variable beq: A -> A -> bool.
+Hypothesis beq_correct: forall x y, if beq x y then eq x y else ~eq x y.
+
+Variable le: A -> A -> Prop.
+Hypothesis le_trans: forall x y z, le x y -> le y z -> le x z.
+
+(** This is the strict order induced by [le].  We assume it is well-founded:
+  all strictly descending chains are finite. *)
+
+Definition lt (x y: A) := le x y /\ ~eq x y.
+Hypothesis lt_wf: well_founded lt.
+
+(** Let [top] be a greatest element of [A]. *)
+Variable top: A.
+Hypothesis top_greatest: forall x, le x top.
+
+(** Let [F] be a monotonic function from [A] to [A]. *)
+
+Variable F: A -> A.
+Hypothesis F_mon: forall x y, le x y -> le (F x) (F y).
+
+(** Terminology: an element [x] of [A] is
+- a fixpoint if [eq x (F x)] i.e. [F x = x] up to the equality [eq];
+- a pre-fixpoint if [le (F x) x] i.e. [F x] is below [x] in the [le] ordering;
+- a post-fixpoint if [le x (F x)] i.e. [F x] is above [x] in the [le] ordering.
+*)
+
+(** We iterate [F] starting from a pre-fixpoint [x] until we reach a fixpoint.
+
+  The [iterate] function takes as argument not just [x], but also a
+  proof that [x] is a pre-fixpoint, i.e. [le (F x) x].  This proof is
+  needed to show that [x] decreases strictly during iteration, thus
+  ensuring termination. *)
+
+(* To define [iterate], we use Coq's [Function] mechanism, which supports
+  nonstructural recursion whose termination is ensured by a well-founded
+  ordering.  [Function] also produces a convenient induction principle,
+  accessible via the [functional induction] tactic, which mimics the
+  case analysis and recursive calls made by the function. *)
+
+Function iterate (x: A) (P: le (F x) x) {wf lt x} : A :=
+  let x' := F x in
+  if beq x x' then x else iterate x' (F_mon (F x) x P).
+Proof.
+- (* show that [lt (F x) x] in the recursive case, i.e. if [beq x (F x) = false]. *)
+  split.
+  auto.
+  generalize (beq_correct x (F x)). rewrite teq. auto.
+- (* show that the [lt] ordering is well-founded *)
+  apply lt_wf.
+Qed.
+
+(** The fixpoint is obtained by iterating from [top]. *)
+
+Definition fixpoint : A := iterate top (top_greatest (F top)).
+
+(** We now show that [fixpoint] is a fixpoint. *)
+
+Theorem fixpoint_correct:
+  eq fixpoint (F fixpoint).
+Proof.
+  assert (REC: forall x P, eq (iterate x P) (F (iterate x P))).
+  {
+    intros x P. functional induction (iterate x P).
+  - (* base case [beq x (F x) = true] *)
+    generalize (beq_correct x (F x)); rewrite e. auto.
+  - (* recursive case [beq x (F x) = false] *)
+    apply IHa. 
+  }
+  apply REC.
+Qed.
+
+(** Moreove, [fixpoint] is greater than or equal to any post-fixpoint. *)
+
+Theorem fixpoint_greatest:
+  forall z, le z (F z) -> le z fixpoint.
+Proof.
+  intros z POSTFIXPOINT.
+  assert (REC: forall x P, le z x -> le z (iterate x P)).
+  {
+    intros x P. functional induction (iterate x P).
+  - (* base case [beq x (F x) = true] *)
+    auto.
+  - (* recursive case [beq x (F x) = false] *)
+    intros. apply IHa. apply le_trans with (F z). auto. apply F_mon; auto. 
+  }
+  apply REC. apply top_greatest.
+Qed.
+
+End FIXPOINT.
+End GFIXPOINT.
+
 
 (** * 2. Subsets of a finite set of variables. *)
 
