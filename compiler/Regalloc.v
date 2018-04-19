@@ -132,7 +132,7 @@ Lemma agree_update_dead:
   agree L s1 s2 -> ~VS.In x L ->
   agree L (t_update s1 x v) s2.
 Proof.
-  intros; red; intros. unfold t_update. rewrite false_beq_id. auto. congruence. 
+  intros; red; intros. unfold t_update. rewrite false_beq_id. apply H. auto. congruence. 
 Qed.
 
 (** Agreement is preserved by simultaneous assignment to a live variable
@@ -423,7 +423,7 @@ Eval vm_compute in (transf_com my_alloc prog (VS.singleton vr)).
 
 Definition wrong_alloc := fun (x: id) => if beq_id x vr then vb else x.
 
-Eval vm_compute in (correct_allocation wrong_alloc prog (VS.singleton vr)).
+ Eval vm_compute in (correct_allocation wrong_alloc prog (VS.singleton vr)).
 
 (** Result is [false]. *)
 
@@ -447,3 +447,32 @@ Definition regalloc (prog: com) (obs: VS.t) : option com :=
   if correct_allocation f prog obs
   then Some(transf_com f prog obs)
   else None.
+
+Definition agree_all prog obs (st1 st2: state) : Prop :=
+  forall x, st1 x = st2 (regalloc_heuristic prog obs x).
+
+Lemma agree_all_incl : forall prog obs st1 st2,
+    agree_all prog obs st1 st2 ->
+    agree (regalloc_heuristic prog obs) (live prog obs) st1 st2.
+Proof.
+  unfold agree, agree_all. intros.
+  apply H.
+Qed.
+
+Theorem regalloc_correct_terminating:
+  forall prog prog' obs, regalloc prog obs = Some prog' ->
+  forall st st', prog / st \\ st' ->
+  forall st1, agree_all prog obs st st1 ->
+         exists st1', prog' / st1 \\ st1'.
+Proof.
+  intros. unfold regalloc in H.
+  set (f := (regalloc_heuristic prog obs)) in *.
+  destruct (correct_allocation f prog obs) eqn:CORR; 
+    try inversion H.
+  generalize (agree_all_incl prog obs st st1 H1). intros AG.
+  generalize (transf_correct_terminating f st prog st' H0 obs st1 AG CORR).
+  intros (st1' & TRANSF & AG').
+  eexists; eauto.
+Qed.
+  
+  
