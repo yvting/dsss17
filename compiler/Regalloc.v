@@ -1,7 +1,8 @@
-Require Import Bool Arith Omega List Coq.Program.Equality.
-Require Import MSets.
-Require Import Maps Imp.
-Require Import Sequences Semantics Deadcode.
+From Stdlib Require Import Bool Arith List Program.Equality.
+From Stdlib Require Import micromega.Lia.
+From Stdlib Require Import MSets.
+From compiler Require Import Maps Imp.
+From compiler Require Import Sequences Semantics Deadcode.
 Import VSdecide.
 
 (** In this chapter: a study of register allocation viewed as

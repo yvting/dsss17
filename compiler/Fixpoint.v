@@ -1,7 +1,8 @@
-Require Import Recdef Bool Arith Omega List Wellfounded Coq.Program.Wf.
-Require Import MSets.
-Require Import Maps Imp.
-Require Import Sequences Semantics Deadcode.
+From Stdlib Require Import Recdef Bool Arith List Wellfounded Program.Wf.
+From Stdlib Require Import micromega.Lia.
+From Stdlib Require Import MSets.
+From compiler Require Import Maps Imp.
+From compiler Require Import Sequences Semantics Deadcode.
 Import VSdecide.
 
 (** Advanced topic: computing fixpoints using Knaster-Tarski's theorem,

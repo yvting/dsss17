@@ -1,6 +1,6 @@
-Require Import Coq.Program.Equality.
-Require Import Maps Imp.
-Require Import Sequences.
+From Stdlib Require Import Program.Equality.
+From compiler Require Import Maps Imp.
+From compiler Require Import Sequences.
 
 (** In this chapter: various styles of semantics for the Imp language
   from "Software Foundations", and equivalence results between these
@@ -289,7 +289,7 @@ Proof.
   inversion H; subst. apply E_Ass. auto.
 - (* CS_SeqStep *)
   inversion H; subst. apply E_Seq with st'. 
-  apply IHSTEP with (c2:=c1') (st4:=st2); try reflexivity. assumption. auto.
+  apply (IHSTEP _ _ c1' st2); try reflexivity. assumption. auto.
 - (* CS_SeqFinish *)
   apply E_Seq with st2. apply E_Skip. auto.
 - (* CS_IfTrue *)

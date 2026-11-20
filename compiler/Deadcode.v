@@ -1,7 +1,10 @@
-Require Import Bool Arith Omega List Coq.Program.Equality.
-Require Import MSets.
-Require Import Maps Imp.
-Require Import Sequences Semantics.
+From Stdlib Require Import Bool Arith List Program.Equality.
+From Stdlib Require Import micromega.Lia.
+From Stdlib Require Import MSets.
+From Stdlib Require Strings.String.
+From compiler Require Import Maps Imp.
+From compiler Require Import Sequences Semantics.
+Import (notations) String.
 
 (** In this chapter: liveness analysis and its use for an optimization
   called dead code elimination. *)
@@ -420,7 +423,6 @@ Proof.
    - (* Assignment *)
      destruct (VS.mem i L) eqn:LIVE_AFTER.
      + left. eexists. split. apply CS_Ass; eauto.
-       rewrite <- plus_n_O. 
        assert (AEQ: aeval st a = aeval st1 a). 
        { eapply aeval_agree; eauto. fsetdec. }
        rewrite AEQ.

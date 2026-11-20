@@ -1,5 +1,5 @@
-Require Import Bool Arith Omega List Coq.Program.Equality.
-Require Import Maps Imp.
+From Stdlib Require Bool Arith Lia List Program.Equality.
+From compiler Require Import Maps Imp.
 Require Import Sequences Semantics.
 
 (** This chapter defines a compiler from the Imp language to a virtual machine

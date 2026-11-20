@@ -257,7 +257,7 @@ Qed.
   either [P] or [~P] hold.  The Coq standard library provides such axioms
   in the module named [Classical], which we now import. *)
 
-Require Import Classical.
+From Stdlib Require Import Classical.
 
 Definition irred (a: A) : Prop := forall b, ~(R a b).
 
