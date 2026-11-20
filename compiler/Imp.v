@@ -925,10 +925,10 @@ Inductive aexp : Type :=
 (** Defining a few variable names as notational shorthands will make
     examples easier to read: *)
 
-Definition W : id := Id ("W"%string).
-Definition X : id := Id ("X"%string).
-Definition Y : id := Id ("Y"%string).
-Definition Z : id := Id ("Z"%string).
+Definition W : id := Id "W".
+Definition X : id := Id "X".
+Definition Y : id := Id "Y".
+Definition Z : id := Id "Z".
 
 (** (This convention for naming program variables ([X], [Y],
     [Z]) clashes a bit with our earlier use of uppercase letters for
@@ -1671,11 +1671,42 @@ Reserved Notation "c1 '/' st '\\' s '/' st'"
     [ceval] relation. *)
 
 Inductive ceval : com -> state -> result -> state -> Prop :=
-  | E_Skip : forall st,
-      CSkip / st \\ SContinue / st
-  (* FILL IN HERE *)
+| E_Skip : forall st,
+    CSkip / st \\ SContinue / st
+| E_Break : forall st,
+    CBreak / st \\ SBreak / st
+| E_Ass : forall st e v x,
+    aeval st e = v -> 
+    CAss x e / st \\ SContinue / (t_update st x v)
+| E_Seq1 : forall c1 c2 st st',
+    c1 / st \\ SBreak / st' ->
+    CSeq c1 c2 / st \\ SBreak / st'
+| E_Seq2 : forall c1 c2 st st' st'' res,
+    c1 / st \\ SContinue / st' ->
+    c2 / st' \\ res / st'' ->
+    CSeq c1 c2 / st \\ res / st''
+| E_If_True : forall cond c1 c2 st st' res,
+  beval st cond = true ->
+  c1 / st \\ res / st' ->
+  CIf cond c1 c2 / st \\ res /st'
+| E_If_False : forall cond c1 c2 st st' res,
+  beval st cond = false ->
+  c2 / st \\ res / st' ->
+  CIf cond c1 c2 / st \\ res /st'
+| E_While_False : forall cond c st,
+  beval st cond = false ->
+  CWhile cond c / st \\ SContinue / st
+| E_While_Break : forall cond c st st',
+    beval st cond = true ->
+    c / st \\ SBreak / st' ->
+    CWhile cond c / st \\ SContinue / st'
+| E_While_Continue : forall cond c st st' st'',
+    beval st cond = true ->
+    c / st \\ SContinue / st' ->
+    CWhile cond c / st' \\ SContinue / st'' ->
+    CWhile cond c / st \\ SContinue / st''
 
-  where "c1 '/' st '\\' s '/' st'" := (ceval c1 st s st').
+where "c1 '/' st '\\' s '/' st'" := (ceval c1 st s st').
 
 (** Now prove the following properties of your definition of [ceval]: *)
 
@@ -1683,29 +1714,51 @@ Theorem break_ignore : forall c st st' s,
      (BREAK;; c) / st \\ s / st' ->
      st = st'.
 Proof.
-  (* FILL IN HERE *) Admitted.
+  intros c st st' res H.
+  inversion H; subst.
+  - inversion H5; subst. reflexivity.
+  - inversion H2.
+Qed.
 
 Theorem while_continue : forall b c st st' s,
   (WHILE b DO c END) / st \\ s / st' ->
   s = SContinue.
 Proof.
-  (* FILL IN HERE *) Admitted.
+  inversion 1; subst; auto.
+Qed. 
 
 Theorem while_stops_on_break : forall b c st st',
   beval st b = true ->
   c / st \\ SBreak / st' ->
   (WHILE b DO c END) / st \\ SContinue / st'.
 Proof.
-  (* FILL IN HERE *) Admitted.
+  apply E_While_Break.
+Qed.
+
 (** [] *)
 
 (** **** Exercise: 3 stars, advanced, optional (while_break_true)  *)
+Theorem while_break_true_aux : forall cmd res b c st st',
+    cmd / st \\ res / st' ->
+    cmd = (WHILE b DO c END) ->
+    res = SContinue ->
+    beval st' b = true ->
+    exists st'', c / st'' \\ SBreak / st'.
+Proof.
+  induction 1; inversion 1; subst; auto.
+  - intros S BE. congruence.
+  - intros S BE. eauto.
+Qed.
+
 Theorem while_break_true : forall b c st st',
   (WHILE b DO c END) / st \\ SContinue / st' ->
   beval st' b = true ->
   exists st'', c / st'' \\ SBreak / st'.
 Proof.
-(* FILL IN HERE *) Admitted.
+  intros.
+  eapply while_break_true_aux; eauto.
+Qed.
+
 (** [] *)
 
 (** **** Exercise: 4 stars, advanced, optional (ceval_deterministic)  *)
@@ -1714,7 +1767,67 @@ Theorem ceval_deterministic: forall (c:com) st st1 st2 s1 s2,
      c / st \\ s2 / st2 ->
      st1 = st2 /\ s1 = s2.
 Proof.
-  (* FILL IN HERE *) Admitted.
+  intros c st st1 st2 s1 s2 H.
+  generalize s2 st2.
+  induction H.
+  - inversion 1; auto.
+  - inversion 1; subst. auto.
+  - inversion 1; subst. auto.
+  - (* E_Seq1 *)
+    inversion 1; subst.
+    + (* Symmetric case *)    
+      apply IHceval in H6.
+      destruct H6; subst. auto.
+    + (* Asymmetric case *)
+      apply IHceval in H3.
+      destruct H3; subst. congruence.
+  - (* E_Seq2 *)
+    inversion 1; subst.
+    + (* Asymmetric case *)
+      apply IHceval1 in H7.
+      destruct H7; subst. congruence.
+    + (* Symmetric case *)
+      apply IHceval1 in H4.
+      destruct H4; subst.
+      apply IHceval2 in H8.
+      destruct H8; subst.
+      split; reflexivity.
+  - (* E_If_True *)
+    inversion 1; subst.
+    + (* Symmetric case *)
+      apply IHceval in H9.
+      auto.
+    + (* Asymmetric case *)
+      congruence.
+  - (* E_If_False *)
+    inversion 1; subst.
+    + (* Asymmetric case *)
+      congruence.
+    + (* Symmetric case *)
+      apply IHceval in H9.
+      auto.
+  - (* E_While_False *)
+    inversion 1; subst; try congruence.
+    split; reflexivity.
+  - (* E_While_Break *)
+    inversion 1; subst; try congruence.
+    + (* Symmetric case *)
+      apply IHceval in H8.
+      destruct H8; subst. auto.
+    + (* Asymmetric case *)
+      apply IHceval in H5.
+      destruct H5; congruence.
+  - (* E_While_Continue *)
+    inversion 1; subst; try congruence.
+    + (* Asymmetric case *)
+      apply IHceval1 in H9.
+      destruct H9; congruence.
+    + (* Symmetric case *)
+      apply IHceval1 in H6.
+      destruct H6; subst.
+      apply IHceval2 in H10.
+      auto.
+Qed.
 
 (** [] *)
 End BreakImp.
