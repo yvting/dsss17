@@ -119,9 +119,26 @@ Proof.
   - red; auto.
   - destruct (VS.subset (F x) x) eqn:SUBSET. 
     + auto.
-    + apply IHn; auto.
+    + apply IHn. auto.
   } 
   unfold fixpoint. apply H. apply VSP.subset_empty. 
+Qed.
+
+Fixpoint iter' (n: nat) (x: VS.t) : VS.t :=
+  match n with
+  | O => x
+  | S n' => iter' n' (F x)
+  end.
+
+Lemma fixpoint_upper_bound':
+  VS.Subset (iter' niter VS.empty) default.
+Proof.
+  assert (forall n x, VS.Subset x default -> VS.Subset (iter' n x) default).
+  { induction n; intros; simpl.
+  - red; auto.
+  - apply IHn. auto.
+  }
+  apply H. apply VSP.subset_empty.
 Qed.
 
 End FIXPOINT.
@@ -157,7 +174,9 @@ Proof.
 - destruct (VS.mem i L) eqn:MEM. fsetdec. fsetdec.
 - specialize (IHc1 (live c2 L)). specialize (IHc2 L). fsetdec.
 - specialize (IHc1 L). specialize (IHc2 L). fsetdec.
-- apply fixpoint_upper_bound. intro x. specialize (IHc x). fsetdec.
+- apply fixpoint_upper_bound. intro x.
+  remember (VS.union (VS.union (fv_bexp b) (fv_com c)) L) as default.
+  specialize (IHc x). fsetdec.
 Qed.
 
 Lemma live_while_charact:
@@ -297,7 +316,7 @@ Qed.
   source program.  We use big-step semantics to show the following diagram:
 <<
                 agree (live c L) st st1
-     c / st ----------------------------- dce C L / st1
+     c / st ----------------------------- dce c L / st1
        |                                          |
        |                                          |
        |                                          |
@@ -468,6 +487,5 @@ Proof.
        set (WLIVE := live (WHILE b DO c1 END) L) in *.
        simpl in WLIVE. fold WLIVE.
        fsetdec.
-
 Qed.
 

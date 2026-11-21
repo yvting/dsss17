@@ -28,6 +28,7 @@ From Stdlib Require Import Arith.Arith.
 From Stdlib Require Import Arith.EqNat.
 From Stdlib Require Import micromega.Lia.
 From Stdlib Require Import Lists.List.
+From Stdlib Require Import Program.Equality.
 From Stdlib.Strings Require String.
 Import (notations) String.
 Import ListNotations.
@@ -1738,25 +1739,16 @@ Qed.
 (** [] *)
 
 (** **** Exercise: 3 stars, advanced, optional (while_break_true)  *)
-Theorem while_break_true_aux : forall cmd res b c st st',
-    cmd / st \\ res / st' ->
-    cmd = (WHILE b DO c END) ->
-    res = SContinue ->
-    beval st' b = true ->
-    exists st'', c / st'' \\ SBreak / st'.
-Proof.
-  induction 1; inversion 1; subst; auto.
-  - intros S BE. congruence.
-  - intros S BE. eauto.
-Qed.
-
 Theorem while_break_true : forall b c st st',
   (WHILE b DO c END) / st \\ SContinue / st' ->
   beval st' b = true ->
   exists st'', c / st'' \\ SBreak / st'.
 Proof.
-  intros.
-  eapply while_break_true_aux; eauto.
+  intros until st'. intros STEP.
+  dependent induction STEP.
+  - intros. congruence.
+  - intros. eauto.
+  - intros. eapply IHSTEP2; eauto.
 Qed.
 
 (** [] *)
